@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,57 +44,56 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
 
-/* Definitions for pump1 */
-osThreadId_t pump1Handle;
-const osThreadAttr_t pump1_attributes = {
-  .name = "pump1",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for pump2 */
-osThreadId_t pump2Handle;
-const osThreadAttr_t pump2_attributes = {
-  .name = "pump2",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for LCD */
-osThreadId_t LCDHandle;
-const osThreadAttr_t LCD_attributes = {
-  .name = "LCD",
+/* Definitions for updateLCD */
+osThreadId_t updateLCDHandle;
+const osThreadAttr_t updateLCD_attributes = {
+  .name = "updateLCD",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for pumpSemaphore */
-osSemaphoreId_t pumpSemaphoreHandle;
-const osSemaphoreAttr_t pumpSemaphore_attributes = {
-  .name = "pumpSemaphore"
+/* Definitions for updateCloud */
+osThreadId_t updateCloudHandle;
+const osThreadAttr_t updateCloud_attributes = {
+  .name = "updateCloud",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for mySemaphore01 */
+osSemaphoreId_t mySemaphore01Handle;
+const osSemaphoreAttr_t mySemaphore01_attributes = {
+  .name = "mySemaphore01"
 };
 /* USER CODE BEGIN PV */
-//petrol pumped for each pumper
+//petrol tank volume
+uint32_t petrol_tank_volume = 50000;
+
+//petrol pumped value for each pump
 uint32_t pump1_volume = 0;
 uint32_t pump2_volume = 0;
+uint32_t pump3_volume = 0;
+uint32_t pump4_volume = 0;
 
-//activation status of each pump
+//petrol pump activation status
 static bool pump1_status = false;
 static bool pump2_status = false;
+static bool pump3_status = false;
+static bool pump4_status = false;
+
+//petrol tank status
+static bool petrol_sufficient = true;
 
 //timing analysis
 uint32_t timer_start = 0;
 uint32_t timer_end = 0;
-uint32_t load_value = 0;
 
-//debouncing time
-TickType_t lastDebounceTime = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-void func_pump1(void *argument);
-void func_pump2(void *argument);
-void updateLCD(void *argument);
+void func_updateLCD(void *argument);
+void func_updateCloud(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -102,18 +102,33 @@ void updateLCD(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-	TickType_t currentTime = xTaskGetTickCount();
-	
 
-	if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-		lastDebounceTime = currentTime;
+	if(petrol_tank_volume != 0){
+		if((GPIO_Pin ==pump_1_info_Pin) && petrol_sufficient ){
+			 petrol_tank_volume--;
+			 pump1_volume++;
 
-		if(GPIO_Pin == start_stop_pump1_button_Pin){
-			pump1_status = !pump1_status;
+		}else if((GPIO_Pin ==pump_2_info_Pin) && petrol_sufficient ){
+			 petrol_tank_volume--;
+			 pump1_volume++;
 
-		}else if(GPIO_Pin == start_stop_pump2_button_Pin){
-			pump2_status = !pump2_status;
+		}else if((GPIO_Pin ==pump_3_info_Pin) && petrol_sufficient ){
+			 petrol_tank_volume--;
+			 pump1_volume++;
+
+		}else if((GPIO_Pin ==pump_4_info_Pin) && petrol_sufficient ){
+			 petrol_tank_volume--;
+			 pump1_volume++;
+
 		}
+	}else{
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_SET);
+		osDelay(10);
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_RESET);
+
+		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_4,GPIO_PIN_SET);
+		osDelay(10);
+		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_4,GPIO_PIN_RESET);
 	}
 }
 /* USER CODE END 0 */
@@ -160,8 +175,8 @@ int main(void)
   /* USER CODE END RTOS_MUTEX */
 
   /* Create the semaphores(s) */
-  /* creation of pumpSemaphore */
-  pumpSemaphoreHandle = osSemaphoreNew(1, 1, &pumpSemaphore_attributes);
+  /* creation of mySemaphore01 */
+  mySemaphore01Handle = osSemaphoreNew(1, 1, &mySemaphore01_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -176,14 +191,11 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of pump1 */
-  pump1Handle = osThreadNew(func_pump1, NULL, &pump1_attributes);
+  /* creation of updateLCD */
+  updateLCDHandle = osThreadNew(func_updateLCD, NULL, &updateLCD_attributes);
 
-  /* creation of pump2 */
-  pump2Handle = osThreadNew(func_pump2, NULL, &pump2_attributes);
-
-  /* creation of LCD */
-  LCDHandle = osThreadNew(updateLCD, NULL, &LCD_attributes);
+  /* creation of updateCloud */
+  updateCloudHandle = osThreadNew(func_updateCloud, NULL, &updateCloud_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -308,10 +320,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6|GPIO_PIN_8, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -319,27 +331,30 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin PA15 */
+  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC6 PC8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_8;
+  /*Configure GPIO pin : PC4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : start_stop_pump1_button_Pin start_stop_pump2_button_Pin */
-  GPIO_InitStruct.Pin = start_stop_pump1_button_Pin|start_stop_pump2_button_Pin;
+  /*Configure GPIO pins : pump_4_info_Pin pump_3_info_Pin pump_1_info_Pin pump_2_info_Pin */
+  GPIO_InitStruct.Pin = pump_4_info_Pin|pump_3_info_Pin|pump_1_info_Pin|pump_2_info_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -352,66 +367,40 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_func_pump1 */
+/* USER CODE BEGIN Header_func_updateLCD */
 /**
-  * @brief  Function implementing the pump1 thread.
+  * @brief  Function implementing the updateLCD thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_func_pump1 */
-void func_pump1(void *argument)
+/* USER CODE END Header_func_updateLCD */
+void func_updateLCD(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
   {
-	osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
-    if(pump1_status){
-    	pump1_volume++;
-    }
-    osSemaphoreRelease(pumpSemaphoreHandle);
+    osDelay(1);
   }
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_func_pump2 */
+/* USER CODE BEGIN Header_func_updateCloud */
 /**
-* @brief Function implementing the pump2 thread.
+* @brief Function implementing the updateCloud thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_func_pump2 */
-void func_pump2(void *argument)
+/* USER CODE END Header_func_updateCloud */
+void func_updateCloud(void *argument)
 {
-  /* USER CODE BEGIN func_pump2 */
-  /* Infinite loop */
-  for(;;)
-  {
-	  osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
-	  if(pump2_status){
-		pump2_volume++;
-	  }
-	  osSemaphoreRelease(pumpSemaphoreHandle);
-  }
-  /* USER CODE END func_pump2 */
-}
-
-/* USER CODE BEGIN Header_updateLCD */
-/**
-* @brief Function implementing the LCD thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_updateLCD */
-void updateLCD(void *argument)
-{
-  /* USER CODE BEGIN updateLCD */
+  /* USER CODE BEGIN func_updateCloud */
   /* Infinite loop */
   for(;;)
   {
     osDelay(1);
   }
-  /* USER CODE END updateLCD */
+  /* USER CODE END func_updateCloud */
 }
 
 /**
