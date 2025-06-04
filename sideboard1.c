@@ -103,7 +103,7 @@ void updateLCD(void *argument);
 /* USER CODE BEGIN 0 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	TickType_t currentTime = xTaskGetTickCount();
-	
+
 
 	if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
 		lastDebounceTime = currentTime;
@@ -368,6 +368,8 @@ void func_pump1(void *argument)
 	osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
     if(pump1_status){
     	pump1_volume++;
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
     }
     osSemaphoreRelease(pumpSemaphoreHandle);
   }
@@ -390,6 +392,8 @@ void func_pump2(void *argument)
 	  osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
 	  if(pump2_status){
 		pump2_volume++;
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
 	  }
 	  osSemaphoreRelease(pumpSemaphoreHandle);
   }
