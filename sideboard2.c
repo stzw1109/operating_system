@@ -370,6 +370,8 @@ void func_pump3(void *argument)
 	  osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
 	  if(pump3_status){
 		pump3_volume++;
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_RESET);
 	  }
 	  osSemaphoreRelease(pumpSemaphoreHandle);
   }
@@ -392,6 +394,8 @@ void func_pump4(void *argument)
 	  osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
 	  if(pump4_status){
 		pump4_volume++;
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_RESET);
 	  }
 	  osSemaphoreRelease(pumpSemaphoreHandle);
   }
