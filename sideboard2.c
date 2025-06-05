@@ -104,6 +104,11 @@ void updateLCD(void *argument);
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	TickType_t currentTime = xTaskGetTickCount();
 
+	if(GPIO_Pin == stop_board3_Pin ){
+			pump3_status = false;
+			pump4_status = false;
+		}
+
 	if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
 		lastDebounceTime = currentTime;
 
@@ -330,6 +335,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : stop_board3_Pin */
+  GPIO_InitStruct.Pin = stop_board3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(stop_board3_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PC10 PC12 */
   GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_12;
