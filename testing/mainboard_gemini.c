@@ -23,10 +23,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
-#include <stdio.h> // For sprintf
-#include "wizchip_conf.h" // For W5500 functions
-#include "MQTTClient.h"   // Paho MQTT Client library
-#include "MQTTNetwork.h"  // Your custom MQTT network layer
+#include <stdio.h>
+#include "wizchip_conf.h"
+#include <string.h>
+#include "MQTTClient.h" // Uncommented: MQTTClient library
+#include "MQTTNetwork.h" // Uncommented: Your custom MQTT network layer
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,17 +39,17 @@
 /* USER CODE BEGIN PD */
 #define DEBOUNCE_TIME 100
 
-// For W5500 Chip Select
-#define W5500_CS_PORT SPI_Chip_Select_GPIO_Port // Assuming this maps to GPIOC
-#define W5500_CS_PIN  SPI_Chip_Select_Pin       // Assuming this maps to GPIO_PIN_0
-
-// W5500 DHCP/DNS/Socket definitions (from wizchip_conf.h/socket.h)
+//for W5500
+#define W5500_CS_PORT GPIOC // Assuming SPI_Chip_Select_GPIO_Port is GPIOC
+#define W5500_CS_PIN GPIO_PIN_0 // Assuming SPI_Chip_Select_Pin is GPIO_PIN_0
 #define DHCP_SOCKET     0
 #define DNS_SOCKET      1
-#define HTTP_SOCKET     2 // Not explicitly used but good to keep if needed
-#define SOCK_TCPS       0 // Socket type for TCP (W5500's socket index 0)
-#define MQTT_LOCAL_PORT 5000 // Local port for MQTT client socket
-
+// #define HTTP_SOCKET     2 // Not used directly in this context
+// #define SOCK_TCPS       0 // Redefined in MQTTNetwork.c for clarity
+// #define SOCK_UDPS       1 // Not used in this context
+// #define PORT_TCPS       5000 // Not used directly, defined locally in MQTTNetwork.c
+// #define PORT_UDPS       3000 // Not used in this context
+// #define MAX_HTTPSOCK    6 // Not used in this context
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,61 +59,99 @@
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+
 SPI_HandleTypeDef hspi2;
+
 UART_HandleTypeDef huart2;
 
 /* Definitions for updateLCD */
 osThreadId_t updateLCDHandle;
 const osThreadAttr_t updateLCD_attributes = {
   .name = "updateLCD",
-  .stack_size = 256 * 4, // Increased stack size, especially if using printf or I2C LCD
-  .priority = (osPriority_t) osPriorityLow,
+  .stack_size = 256 * 4, // Increased stack size
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for updateCloud */
 osThreadId_t updateCloudHandle;
 const osThreadAttr_t updateCloud_attributes = {
   .name = "updateCloud",
-  .stack_size = 512 * 4, // Increased stack size for MQTT operations (network, buffers)
-  .priority = (osPriority_t) osPriorityNormal, // Higher priority to ensure network operations
-};
-/* Definitions for updatePetrol */
-osThreadId_t updatePetrolHandle;
-const osThreadAttr_t updatePetrol_attributes = {
-  .name = "updatePetrol",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4, // Increased stack size for MQTT operations
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for pumpEventHandle */
+osThreadId_t pumpEventHandleHandle;
+const osThreadAttr_t pumpEventHandle_attributes = {
+  .name = "pumpEventHandle",
+  .stack_size = 256 * 4, // Increased stack size to handle logic and UART printing
+  .priority = (osPriority_t) osPriorityHigh, // Set higher priority as it processes critical events
+};
+/* Definitions for pumpVolumeQueue */
+osMessageQueueId_t pumpVolumeQueueHandle;
+const osMessageQueueAttr_t pumpVolumeQueue_attributes = {
+  .name = "pumpVolumeQueue"
 };
 /* Definitions for mySemaphore01 */
 osSemaphoreId_t mySemaphore01Handle;
 const osSemaphoreAttr_t mySemaphore01_attributes = {
   .name = "mySemaphore01"
 };
+/* Definitions for myBinarySem02 */
+// myBinarySem02Handle is not used in the updated logic, consider removing if not needed elsewhere
+osSemaphoreId_t myBinarySem02Handle;
+const osSemaphoreAttr_t myBinarySem02_attributes = {
+  .name = "myBinarySem02"
+};
 /* USER CODE BEGIN PV */
-// Declare shared variables as volatile
-volatile uint32_t petrol_tank_volume = 1000000;
+//petrol tank volume
+volatile uint32_t petrol_tank_volume = 1000000; // Make volatile
 
-// petrol pumped value for each pump - These are directly incremented by EXTI ISRs
-volatile uint32_t pump1_volume = 0;
-volatile uint32_t pump2_volume = 0;
-volatile uint32_t pump3_volume = 0;
-volatile uint32_t pump4_volume = 0;
+//petrol pumped value for each pump
+volatile uint32_t pump1_volume = 0; // Make volatile
+volatile uint32_t pump2_volume = 0; // Make volatile
+volatile uint32_t pump3_volume = 0; // Make volatile
+volatile uint32_t pump4_volume = 0; // Make volatile
 
-// petrol tank status - managed by updatePetrol thread
+//petrol pump activation status - These variables are no longer used for counting logic
+// static bool pump1_status = false;
+// static bool pump2_status = false;
+// static bool pump3_status = false;
+// static bool pump4_status = false;
+
+//petrol tank status - make volatile as it's modified in pumpEventHandle and checked elsewhere
 volatile bool petrol_sufficient = true;
 
-// W5500 network buffers and info
-uint8_t dhcp_buffer[1024];
-uint8_t dns_buffer[1024]; // If DNS was implemented
-volatile bool ip_assigned = false; // Flag to indicate if IP is assigned via DHCP
+//timing analysis (if used, make volatile if modified by ISRs/multiple tasks)
+uint32_t timer_start = 0;
+uint32_t timer_end = 0;
 
-// MQTT variables
+//for SPI (W5500)
+uint8_t txsize[8] = {2,2,2,2,2,2,2,2}; // Socket TX buffer
+uint8_t rxsize[8] = {2,2,2,2,2,2,2,2}; // Socket RX buffer
+volatile bool ip_assigned = false; // Make volatile
+uint8_t dhcp_buffer[1024];
+uint8_t dns_buffer[1024]; // Used if DNS is implemented
+uint8_t socknumlist[] = {2, 3, 4, 5, 6, 7}; // List of available sockets
+uint8_t RX_BUF[1024]; // Generic RX buffer (if used by W5500 driver directly)
+uint8_t TX_BUF[1024]; // Generic TX buffer (if used by W5500 driver directly)
+
+wiz_NetInfo net_info = {
+    .mac  = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED },
+    .dhcp = NETINFO_DHCP
+};
+
+char message_buffer[100]; // Renamed 'message' to 'message_buffer' to avoid conflict if 'message' is MQTT struct
+char charData[200]; // Data holder, used in W5500Init for debug print
+unsigned int buffer; // Used for sprintf return value
+
+//MQTT stuff - Uncommented and declared
 Network network;
 MQTTClient client;
-unsigned char sendbuf[256], readbuf[256]; // Increased buffer size for MQTT messages
+unsigned char sendbuf[256], readbuf[256]; // Increased buffer size for MQTT
 MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
 
-// General purpose buffer for ITM_SendChar or LCD
-char message_buffer[100];
+
+//message queue stuff for pump events
+uint16_t pump_event_id = 0; // Renamed 'pump_event' to 'pump_event_id' for clarity
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -123,7 +162,7 @@ static void MX_I2C1_Init(void);
 static void MX_SPI2_Init(void);
 void func_updateLCD(void *argument);
 void func_updateCloud(void *argument);
-void func_updatePetrol(void *argument);
+void func_pumpEventHandle(void *argument);
 
 /* USER CODE BEGIN PFP */
 // W5500 SPI Chip Select functions
@@ -144,47 +183,43 @@ void W5500Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 /**
  * @brief EXTI line detection callbacks.
  * This function is called by the HAL when an external interrupt occurs.
- * It should only increment the volume counters as pulses arrive from flow sensors.
+ * It should ONLY put the pump event ID into the queue.
  * @param GPIO_Pin: Specifies the pins connected to EXTI line.
  * @retval None
  */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    // Disable interrupts briefly to ensure atomic updates of shared variables (uint32_t)
-    // This is safer than semaphores in ISRs for simple, short critical sections.
-    __disable_irq();
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+    // In ISR, only put event into queue. Complex logic or GPIO writes should be in tasks.
+    // The check for petrol_tank_volume == 0 and stopping boards will be done in func_pumpEventHandle.
 
-    if (petrol_tank_volume > 0) { // Only decrement if there's petrol left
-        if (GPIO_Pin == pump_1_info_Pin) {
-            petrol_tank_volume--;
-            pump1_volume++;
-        } else if (GPIO_Pin == pump_2_info_Pin) {
-            petrol_tank_volume--;
-            pump2_volume++;
-        } else if (GPIO_Pin == pump_3_info_Pin) {
-            petrol_tank_volume--;
-            pump3_volume++;
-        } else if (GPIO_Pin == pump_4_info_Pin) {
-            petrol_tank_volume--;
-            pump4_volume++;
-        }
+    uint16_t current_pump_event_id = 0; // Local variable for the event ID
+
+    if (GPIO_Pin == pump_1_info_Pin) {
+        current_pump_event_id = 1;
+    } else if (GPIO_Pin == pump_2_info_Pin) {
+        current_pump_event_id = 2;
+    } else if (GPIO_Pin == pump_3_info_Pin) {
+        current_pump_event_id = 3;
+    } else if (GPIO_Pin == pump_4_info_Pin) {
+        current_pump_event_id = 4;
     }
-    // Re-enable interrupts
-    __enable_irq();
 
-    // The logic to stop boards (HAL_GPIO_WritePin) should be in the updatePetrol task,
-    // not in the ISR, as it's not time-critical and involves GPIO writes.
+    // Only put a valid event into the queue if a known pump pin triggered it.
+    // Use osWaitNone (0) as timeout in ISR context to avoid blocking.
+    if (current_pump_event_id != 0) {
+        osMessageQueuePut(pumpVolumeQueueHandle, &current_pump_event_id, 0, 0);
+    }
 }
+
 
 // W5500 SPI Chip Select functions
 void wizchip_select(void) {
 	HAL_GPIO_WritePin(W5500_CS_PORT, W5500_CS_PIN, GPIO_PIN_RESET); // Assert CS (active low)
 }
 
-void wizchip_deselect(void) {
+void wizchip_deselect(void)  {
 	HAL_GPIO_WritePin(W5500_CS_PORT, W5500_CS_PIN, GPIO_PIN_SET);   // De-assert CS
 }
 
@@ -229,8 +264,13 @@ void W5500Init() {
     reg_wizchip_spi_cbfunc(wizchipReadByte, wizchipWriteByte);
     reg_wizchip_spiburst_cbfunc(wizchipReadBurst, wizchipWriteBurst);
 
-    // Set W5500 RX/TX buffer sizes for each socket
-    uint8_t rx_tx_buff_sizes[] = {2, 2, 2, 2, 2, 2, 2, 2}; // 2KB for each of 8 sockets
+    // Set W5500 RX/TX buffer sizes for each socket (Each '2' means 4KB)
+    // Correct configuration if total TX/RX sum must not exceed 16KB each.
+    // For 8 sockets, {1,1,1,1,1,1,1,1} for 2KB per socket is typical.
+    // If you use {2,2,2,2,2,2,2,2}, it implies 4KB per socket, totaling 32KB for TX and 32KB for RX,
+    // which EXCEEDS the W5500's 16KB TX / 16KB RX memory.
+    // Please verify your intended buffer sizes. Using {1,1,1,1,1,1,1,1} is safer for 8 sockets.
+    uint8_t rx_tx_buff_sizes[] = {1, 1, 1, 1, 1, 1, 1, 1}; // Changed to 2KB per socket (2^1 KB)
     wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
 
     // Set MAC address before using DHCP
@@ -262,14 +302,11 @@ void W5500Init() {
     while((!ip_assigned) && (dhcp_timeout_ctr > 0)) {
         DHCP_run();
         dhcp_timeout_ctr--;
-        // In a real RTOS, you'd use osDelay(1) here if W5500Init was in a task
-        // but since it's in main() before scheduler start, busy-waiting is okay for setup.
-        // For debugging, consider a small HAL_Delay or ITM_SendChar to see progress.
-        HAL_Delay(10); // Small delay to prevent tight loop, though scheduler isn't running
+        HAL_Delay(10); // Small delay to prevent tight loop in pre-scheduler init
     }
 
     if(!ip_assigned) {
-        sprintf(message_buffer, "DHCP Failed! Using static IP (if configured).\r\n");
+        sprintf(message_buffer, "DHCP Failed! Using static IP (fallback).\r\n");
         HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
         // Fallback to static IP if DHCP fails (example static IP)
         net_info_local.dhcp = NETINFO_STATIC;
@@ -288,13 +325,14 @@ void W5500Init() {
     wizchip_setnetinfo(&net_info_local);
 
     // Print network info to ITM/UART for debugging
-    sprintf(message_buffer, "IP:  %d.%d.%d.%d\r\nGW:  %d.%d.%d.%d\r\nSN:  %d.%d.%d.%d\r\n",
+    sprintf(charData, "IP:  %d.%d.%d.%d\r\nGW:  %d.%d.%d.%d\r\nSN:  %d.%d.%d.%d\r\n",
         net_info_local.ip[0], net_info_local.ip[1], net_info_local.ip[2], net_info_local.ip[3],
         net_info_local.gw[0], net_info_local.gw[1], net_info_local.gw[2], net_info_local.gw[3],
         net_info_local.sn[0], net_info_local.sn[1], net_info_local.sn[2], net_info_local.sn[3]
     );
-    HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t*)charData, strlen(charData), HAL_MAX_DELAY);
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -303,6 +341,7 @@ void W5500Init() {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -325,14 +364,12 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART2_UART_Init(); // Initialize UART for debug messages
+  MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-
-  // W5500 initialization - run before RTOS starts for network setup
-  W5500Init();
-
+  // lcd_init(); // Uncomment if you are using an LCD
+  W5500Init(); // Uncommented: W5500 initialization
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -344,10 +381,10 @@ int main(void)
 
   /* Create the semaphores(s) */
   /* creation of mySemaphore01 */
-  // This semaphore can be used to protect multi-byte reads/writes to shared variables
-  // if not using __disable_irq() / __enable_irq().
-  // For ISRs, direct interrupt disabling is safer.
   mySemaphore01Handle = osSemaphoreNew(1, 1, &mySemaphore01_attributes);
+
+  /* creation of myBinarySem02 */
+  myBinarySem02Handle = osSemaphoreNew(1, 1, &myBinarySem02_attributes); // MyBinarySem02 is unused in new logic
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -357,8 +394,14 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* creation of pumpVolumeQueue */
+  // Queue size 16 for uint16_t is good for pump events
+  pumpVolumeQueueHandle = osMessageQueueNew (16, sizeof(uint16_t), &pumpVolumeQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  // osMessageQueuePut(pumpVolumeQueueHandle,&petrol_tank_volume,0,0); // REMOVE: Don't put tank volume in this queue
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -368,11 +411,15 @@ int main(void)
   /* creation of updateCloud */
   updateCloudHandle = osThreadNew(func_updateCloud, NULL, &updateCloud_attributes);
 
-  /* creation of updatePetrol */
-  updatePetrolHandle = osThreadNew(func_updatePetrol, NULL, &updatePetrol_attributes);
+  /* creation of pumpEventHandle */
+  pumpEventHandleHandle = osThreadNew(func_pumpEventHandle, NULL, &pumpEventHandle_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* Remove these as func_pumpEventHandle centralizes volume updates */
+  // updatePetrol_P1Handle = osThreadNew(func_updatePetrol_pump1, NULL, &updatePetrol_P1_attributes);
+  // updatePetrol_P2Handle = osThreadNew(func_updatePetrol_pump2, NULL, &updatePetrol_P2_attributes);
+  // updatePetrol_P3Handle = osThreadNew(func_updatePetrol_pump3, NULL, &updatePetrol_P3_attributes);
+  // updatePetrol_P4Handle = osThreadNew(func_updatePetrol_pump4, NULL, &updatePetrol_P4_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -566,38 +613,30 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  // Initial state for W5500 Chip Select: HIGH (de-asserted)
-  HAL_GPIO_WritePin(SPI_Chip_Select_GPIO_Port, SPI_Chip_Select_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(SPI_Chip_Select_GPIO_Port, SPI_Chip_Select_Pin, GPIO_PIN_SET); // Set CS high initially
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOB, pump3_volume_inc_Pin|pump4_volume_inc_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : SPI_Chip_Select_Pin */
   GPIO_InitStruct.Pin = SPI_Chip_Select_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  // It's usually good to keep CS pin pulled high when not active
-  GPIO_InitStruct.Pull = GPIO_PULLUP; // Changed from PULLDOWN to PULLUP
+  GPIO_InitStruct.Pull = GPIO_PULLUP; // Changed to PULLUP for SPI CS, active low
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SPI_Chip_Select_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : pump2_volume_inc_Pin pump1_volume_inc_Pin stop_Board1_Pin */
+  GPIO_InitStruct.Pin = pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : stop_Board2_Pin */
   GPIO_InitStruct.Pin = stop_Board2_Pin;
@@ -606,27 +645,24 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(stop_Board2_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump_4_info_Pin pump_3_info_Pin pump_1_info_Pin pump_2_info_Pin */
-  GPIO_InitStruct.Pin = pump_4_info_Pin|pump_3_info_Pin|pump_1_info_Pin|pump_2_info_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING; // Falling edge triggered interrupt
-  GPIO_InitStruct.Pull = GPIO_PULLUP; // Pull-up to ensure HIGH when idle
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : stop_Board1_Pin */
-  GPIO_InitStruct.Pin = stop_Board1_Pin;
+  /*Configure GPIO pins : pump3_volume_inc_Pin pump4_volume_inc_Pin */
+  GPIO_InitStruct.Pin = pump3_volume_inc_Pin|pump4_volume_inc_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(stop_Board1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : pump_4_info_Pin pump_3_info_Pin pump_1_info_Pin pump_2_info_Pin */
+  GPIO_InitStruct.Pin = pump_4_info_Pin|pump_3_info_Pin|pump_1_info_Pin|pump_2_info_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING; // Changed to FALLING for pump info pulses
+  GPIO_InitStruct.Pull = GPIO_PULLUP; // Pull-up to ensure HIGH when idle
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  // Ensure the interrupt lines for the pump info pins are correctly enabled
-  // For pump_1_info_Pin and pump_2_info_Pin and pump_3_info_Pin and pump_4_info_Pin,
-  // these are likely on EXTI lines within 5-9 and 10-15.
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0); // Check your specific pin mappings
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0); // Check your specific pin mappings
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -642,25 +678,31 @@ void func_updateLCD(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    // Acquire semaphore if multiple tasks access pump volumes and petrol_tank_volume
-    // or ensure atomic reads (e.g., disable interrupts for multi-byte reads).
-    // For simple display, direct reads might be fine if variables are volatile.
-    // Example: Display petrol tank volume and individual pump volumes
-    sprintf(message_buffer, "Tank: %lu", petrol_tank_volume);
-    // Assuming i2c-lcd.h provides lcd_put_cur and lcd_send_string
-    // lcd_put_cur(0, 0);
-    // lcd_send_string(message_buffer);
+    // Acquire semaphore for consistent read if variables are updated by other tasks/ISRs.
+    // 'mySemaphore01Handle' is used for volume updates.
+    if(osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK){
+        // Format and display messages
+        // lcd_clear(); // Uncomment if you have this function
+        // lcd_put_cur(0, 0); // Uncomment if you have this function
+        sprintf(message_buffer, "Tank: %lu L", petrol_tank_volume);
+        // lcd_send_string(message_buffer); // Uncomment if you have this function
 
-    sprintf(message_buffer, "P1:%lu P2:%lu", pump1_volume, pump2_volume);
-    // lcd_put_cur(1, 0); // For 2nd line
-    // lcd_send_string(message_buffer);
+        // Example for showing individual pump volumes on a second line
+        // lcd_put_cur(1, 0); // For 2nd line
+        sprintf(message_buffer, "P1:%lu P2:%lu", pump1_volume, pump2_volume);
+        // lcd_send_string(message_buffer); // Uncomment if you have this function
 
-    // You might want to scroll or show other pumps on another line/screen
-    // sprintf(message_buffer, "P3:%lu P4:%lu", pump3_volume, pump4_volume);
-    // lcd_put_cur(2, 0); // For 3rd line if available
-    // lcd_send_string(message_buffer);
+        // Consider updating a third line for P3/P4 if your LCD supports it
+        // lcd_put_cur(2, 0); // For 3rd line
+        // sprintf(message_buffer, "P3:%lu P4:%lu", pump3_volume, pump4_volume);
+        // lcd_send_string(message_buffer);
 
-
+        osSemaphoreRelease(mySemaphore01Handle); // Release semaphore
+    } else {
+        // Log semaphore acquisition failure, if necessary
+        sprintf(message_buffer, "LCD: Failed to acquire semaphore!\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+    }
     osDelay(pdMS_TO_TICKS(500)); // Update LCD every 500ms
   }
   /* USER CODE END 5 */
@@ -676,152 +718,247 @@ void func_updateLCD(void *argument)
 void func_updateCloud(void *argument)
 {
   /* USER CODE BEGIN func_updateCloud */
-  // --- MQTT Connection and Initialization (Moved outside the loop) ---
-  // NOTE ON TLS (Port 8883): Your current W5500 and Paho MQTT client setup
-  // does NOT include TLS/SSL. Connecting to port 8883 will fail.
-  // Use port 1883 for unencrypted MQTT.
+  // --- MQTT Connection and Initialization Setup for HiveMQ Cluster ---
   //
-  // NOTE ON HOSTNAMES: The `connect` function in socket.h typically expects an IP address (uint8_t[4]).
-  // Your `MQTTNetwork.c` uses a hardcoded IP or expects a uint8_t array.
-  // If you want to connect to a hostname like `4c5e19745ee742f4aa5c4a42bf15d3a8.s1.eu.hivemq.cloud`,
-  // you MUST implement DNS resolution using W5500's DNS client features first.
+  // IMPORTANT: HiveMQ Cloud typically enforces TLS on port 8883.
+  // Your current W5500 and Paho MQTT client setup DOES NOT include a TLS/SSL stack.
+  // Attempting to connect to port 8883 WITHOUT TLS will FAIL at runtime.
+  // To connect securely to HiveMQ Cloud, you WILL NEED to integrate a TLS library
+  // (e.g., MbedTLS) into your project and modify your MQTTNetwork.c to handle TLS handshakes.
   //
-  // For demonstration, using a public test broker's IP and port 1883.
-  // REPLACE THIS WITH YOUR ACTUAL BROKER IP and PORT (1883 for non-TLS)
-  uint8_t broker_ip[4] = {18, 196, 172, 192}; // Example: IP of broker.hivemq.com (subject to change)
-  int broker_port = 1883; // Use 1883 for unencrypted MQTT
+  // IMPORTANT: The `mqttnetwork_connect` function (in MQTTNetwork.c) currently expects an IP address (uint8_t[4]).
+  // If you want to use your HiveMQ cluster's HOSTNAME (e.g., 'your-cluster-id.s1.eu.hivemq.cloud'),
+  // you MUST implement DNS resolution (using W5500's DNS client capabilities) to resolve the hostname to an IP address
+  // BEFORE calling `mqttnetwork_connect`. Your current setup does not have DNS client functionality.
+  //
+  // For now, you MUST provide the IP address of your HiveMQ cluster.
+  // You can get this by pinging your HiveMQ Cloud hostname from your PC.
+  //
+  // **REPLACE THIS WITH THE ACTUAL IP ADDRESS OF YOUR HIVEHQ CLUSTER.**
+  // Example for a HiveMQ Cloud cluster (this is a placeholder, get your actual IP):
+  uint8_t broker_ip[4] = {123, 45, 67, 89}; // Placeholder: REPLACE with your actual HiveMQ cluster IP!
+  int broker_port = 8883; // As requested, using port 8883 (requires TLS on HiveMQ Cloud)
+
+  // A placeholder for the resolved IP address. You need to implement DNS to fill this.
+  // For testing WITHOUT DNS: Manually find your cluster's IP (e.g., ping broker_hostname)
+  // and uncomment/set this:
+  // uint8_t resolved_broker_ip[4] = {123, 45, 67, 89}; // Example: IP of your HiveMQ cluster.
+  uint8_t resolved_broker_ip[4] = {0, 0, 0, 0}; // Initialize to 0, DNS should fill this
 
   bool connected_to_mqtt = false;
 
+  // Connection and initialization loop
   while (!connected_to_mqtt) {
-      sprintf(message_buffer, "Connecting to network...\r\n");
+      sprintf(message_buffer, "Cloud: Connecting to network...\r\n");
       HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
 
-      if (mqttnetwork_connect(&network, broker_ip, broker_port) != 0) {
-          sprintf(message_buffer, "Network connection failed. Retrying...\r\n");
+      // --- DNS RESOLUTION (PLACEHOLDER - YOU NEED TO IMPLEMENT THIS) ---
+      // If you are using a hostname, you need to implement DNS resolution here
+      // using the W5500's DNS client functions (e.g., DNS_run()).
+      // For now, `resolved_broker_ip` must be manually set or filled by your DNS implementation.
+      // If DNS is not implemented, the `mqttnetwork_connect` will fail if `resolved_broker_ip` is {0,0,0,0}.
+      // Consider setting `resolved_broker_ip` manually for initial testing if DNS is too complex for now.
+      // Example for manual IP if DNS not implemented:
+      // resolved_broker_ip[0] = 123; resolved_broker_ip[1] = 45; resolved_broker_ip[2] = 67; resolved_broker_ip[3] = 89;
+
+
+      // Attempt network connection using the (resolved) IP address
+      if (mqttnetwork_connect(&network, resolved_broker_ip, broker_port) != 0) {
+          sprintf(message_buffer, "Cloud: Network connection failed. Retrying...\r\n");
           HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-          osDelay(pdMS_TO_TICKS(5000)); // Wait and retry
-          continue; // Go back to top of loop and retry network connect
+          osDelay(pdMS_TO_TICKS(5000)); // Wait 5 seconds before retrying network connection
+          continue; // Skip to next iteration to retry network connection
       }
 
-      sprintf(message_buffer, "Network connected. Initializing MQTT client...\r\n");
+      sprintf(message_buffer, "Cloud: Network connected. Initializing MQTT client...\r\n");
       HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+
+      // Initialize MQTT client with network interface and buffers
       MQTTClientInit(&client, &network, 5000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
 
-      connectData.MQTTVersion = 3;
-      connectData.clientID.cstring = "STM32MainBoard"; // Unique client ID
-      connectData.username.cstring = "b022210152";  // Replace with HiveMQ username
-      connectData.password.cstring = "b022210152UTEM!";  // Replace with HiveMQ password
+      // Setup MQTT connection data
+      connectData.MQTTVersion = 3; // MQTT v3.1.1
+      connectData.clientID.cstring = "STM32MainBoardClient"; // Ensure this is a unique client ID for your cluster
+      connectData.username.cstring = "b022210152";  // Your HiveMQ username
+      connectData.password.cstring = "b022210152UTEM!";  // Your HiveMQ password
 
-      sprintf(message_buffer, "Connecting to MQTT broker...\r\n");
+      sprintf(message_buffer, "Cloud: Connecting to MQTT broker...\r\n");
       HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+
+      // Attempt MQTT connection
+      // NOTE: This will fail if TLS is required by broker_port (8883) and not implemented in MQTTNetwork.c
       if (MQTTConnect(&client, &connectData) != SUCCESS) {
-          sprintf(message_buffer, "MQTT connection failed. Retrying...\r\n");
+          sprintf(message_buffer, "Cloud: MQTT connection failed. Retrying...\r\n");
           HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-          mqttnetwork_disconnect(&network); // Disconnect network if MQTT fails
-          osDelay(pdMS_TO_TICKS(5000)); // Wait and retry
+          mqttnetwork_disconnect(&network); // Disconnect network if MQTT connection fails
+          osDelay(pdMS_TO_TICKS(5000)); // Wait 5 seconds before retrying MQTT connection
       } else {
-          sprintf(message_buffer, "MQTT Connected!\r\n");
+          sprintf(message_buffer, "Cloud: MQTT Connected!\r\n");
           HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-          connected_to_mqtt = true;
+          connected_to_mqtt = true; // Mark as connected, exit this loop
       }
   }
 
+  // --- MQTT Publishing Loop (Runs once connected) ---
   /* Infinite loop for publishing */
   for(;;)
   {
-    // Always check if client is connected before publishing
+    // Check if the MQTT client is still connected.
+    // MQTTYield() helps update client.isconnected state by processing network traffic.
     if (!client.isconnected) {
-        sprintf(message_buffer, "MQTT disconnected. Reconnecting...\r\n");
+        sprintf(message_buffer, "Cloud: MQTT disconnected. Attempting to reconnect...\r\r\n");
         HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-        connected_to_mqtt = false; // Reset flag to re-enter connection logic
-        // Break out of this loop to re-attempt full connection sequence at the top
-        // (This assumes you'll restructure the infinite loop for connection/publish logic)
-        // For simplicity now, let's just retry connect here
-        if (mqttnetwork_connect(&network, broker_ip, broker_port) != 0) {
-            osDelay(pdMS_TO_TICKS(5000));
-            continue;
+
+        // Attempt network reconnection
+        // Requires re-running DNS resolution if using hostname
+        if (mqttnetwork_connect(&network, resolved_broker_ip, broker_port) != 0) {
+            osDelay(pdMS_TO_TICKS(5000)); // Wait before next retry
+            continue; // Skip publishing in this iteration, retry connection in next
         }
+        // Attempt MQTT reconnection
         if (MQTTConnect(&client, &connectData) != SUCCESS) {
-            osDelay(pdMS_TO_TICKS(5000));
-            continue;
+            mqttnetwork_disconnect(&network); // Disconnect network if MQTT fails
+            osDelay(pdMS_TO_TICKS(5000)); // Wait before next retry
+            continue; // Skip publishing in this iteration, retry connection in next
         }
-        connected_to_mqtt = true;
-        sprintf(message_buffer, "MQTT Reconnected!\r\n");
+        sprintf(message_buffer, "Cloud: MQTT Reconnected!\r\n");
         HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
     }
 
-    // Use semaphore if these variables are also written by other threads (e.g., LCD thread if writing to them)
-    // If only ISR writes and this thread reads, volatile is sufficient.
-    // However, if LCD thread also reads and you want a consistent snapshot, a semaphore around this snprintf is good.
-    osSemaphoreAcquire(mySemaphore01Handle, osWaitForever); // Protect shared volume data
-    snprintf((char *)sendbuf, sizeof(sendbuf),
-             "Tank:%lu,P1:%lu,P2:%lu,P3:%lu,P4:%lu,PetrolOk:%d",
-             petrol_tank_volume, pump1_volume, pump2_volume, pump3_volume, pump4_volume, petrol_sufficient);
-    osSemaphoreRelease(mySemaphore01Handle);
-
-    message.payloadlen = strlen((char *)sendbuf);
-    message.qos = QOS0; // Quality of Service 0 for simple fire-and-forget
-    message.retained = 0;
-    message.payload = sendbuf;
-
-    if (MQTTPublish(&client, "stm32/petrol_data", &message) != SUCCESS) { // Use a specific topic
-        sprintf(message_buffer, "MQTT Publish Failed!\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-        // On publish failure, client might be disconnected.
-        // The !client.isconnected check at the top of loop will handle reconnect.
+    // Acquire semaphore to protect shared volume data for consistent read
+    // This is important as ISRs modify these variables.
+    if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
+        snprintf((char *)sendbuf, sizeof(sendbuf),
+                 "Tank:%lu,P1:%lu,P2:%lu,P3:%lu,P4:%lu,PetrolOk:%d",
+                 petrol_tank_volume, pump1_volume, pump2_volume, pump3_volume, pump4_volume, petrol_sufficient);
+        osSemaphoreRelease(mySemaphore01Handle); // Release semaphore immediately after reading
     } else {
-        sprintf(message_buffer, "Published: %s\r\n", (char *)sendbuf);
+        // Handle semaphore acquisition failure, e.g., log an error
+        sprintf(message_buffer, "Cloud: Failed to acquire semaphore!\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+        osDelay(pdMS_TO_TICKS(100)); // Small delay to avoid busy-waiting on semaphore
+        continue; // Skip publishing in this iteration
+    }
+
+
+    MQTTMessage message;
+    message.qos = QOS0; // Quality of Service 0 for simple fire-and-forget (no acknowledgments)
+    message.retained = 0; // Message is not retained by the broker
+    message.payload = sendbuf;
+    message.payloadlen = strlen((char *)sendbuf);
+
+    if (MQTTPublish(&client, "stm32/petrol_data", &message) != SUCCESS) { // Use a specific topic for your data
+        sprintf(message_buffer, "Cloud: MQTT Publish Failed!\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
+        // A publish failure might indicate a disconnect; the next loop iteration's check will handle it.
+    } else {
+        sprintf(message_buffer, "Cloud: Published: %s\r\n", (char *)sendbuf);
         HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
     }
 
-    osDelay(pdMS_TO_TICKS(5000)); // Publish every 5 seconds
+    // This call is CRITICAL for the Paho MQTT client. It processes incoming
+    // MQTT packets (like PINGRESP, CONNACK, etc.) and keeps the connection alive.
+    // It also updates `client.isconnected`.
+    MQTTYield(&client, 100); // Yield for 100ms to allow network activity
+
+    osDelay(pdMS_TO_TICKS(5000)); // Publish every 5 seconds (this will be 5000ms + MQTTYield time)
   }
   /* USER CODE END func_updateCloud */
 }
 
-/* USER CODE BEGIN Header_func_updatePetrol */
+/* USER CODE BEGIN Header_func_pumpEventHandle */
 /**
-* @brief Function implementing the updatePetrol thread.
-* This thread monitors the petrol tank volume and controls the stop signals.
+* @brief Function implementing the pumpEventHandle thread.
+* This task processes pump events received from the EXTI ISR via a message queue.
+* It safely updates global volume counters and controls pump stop signals.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_func_updatePetrol */
-void func_updatePetrol(void *argument)
+/* USER CODE END Header_func_pumpEventHandle */
+void func_pumpEventHandle(void *argument)
 {
-  /* USER CODE BEGIN func_updatePetrol */
+  uint16_t received_pump_event_id; // Variable to hold the pump event ID
+  char debug_msg[100]; // Buffer for debug messages (increased size)
+
   /* Infinite loop */
   for(;;)
   {
-    // Use semaphore to safely read petrol_tank_volume if other tasks also write to it
-    // (ISR writes, but this task also checks the flag, so it's okay)
-    osSemaphoreAcquire(mySemaphore01Handle, osWaitForever); // Acquire semaphore before checking volume
-    if (petrol_tank_volume == 0) {
-        if (petrol_sufficient) { // Only change state and assert pins once
-            petrol_sufficient = false; // Mark petrol as insufficient
-            // Assert stop signals (drive LOW) to side boards
-            HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
-            sprintf(message_buffer, "PETROL TANK EMPTY! Pumps stopped.\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-        }
-    } else { // Tank has petrol
-        if (!petrol_sufficient) { // If it was previously insufficient but now has petrol (refilled)
-            petrol_sufficient = true;
-            // De-assert stop signals (drive HIGH) to allow pumps to start again
-            HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_SET);
-            HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
-            sprintf(message_buffer, "Petrol tank refilled. Pumps enabled.\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)message_buffer, strlen(message_buffer), HAL_MAX_DELAY);
-        }
-    }
-    osSemaphoreRelease(mySemaphore01Handle); // Release semaphore
+    // Wait indefinitely to receive a message from the pumpVolumeQueueHandle.
+    // This task will block here until an EXTI interrupt puts an event into the queue.
+    if (osMessageQueueGet(pumpVolumeQueueHandle, &received_pump_event_id, NULL, osWaitForever) == osOK) {
+        // Message received, now safely update shared global variables.
+        // Acquire the semaphore to protect 'petrol_tank_volume' and 'pumpX_volume'.
+        if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
+            // Check if there's petrol left before decrementing the tank volume.
+            if (petrol_tank_volume > 0) {
+                petrol_tank_volume--; // Decrement the main tank volume
 
-    osDelay(pdMS_TO_TICKS(100)); // Check tank status every 100ms
-  }
-  /* USER CODE END func_updatePetrol */
-}
+                // Increment the volume for the specific pump that triggered the event.
+                switch (received_pump_event_id) {
+                    case 1:
+                        pump1_volume++;
+                        sprintf(debug_msg, "Pump 1 event. P1:%lu, Tank:%lu\r\n", pump1_volume, petrol_tank_volume);
+                        // These GPIO toggles are for the mainboard's *output* control signals to the pumps.
+                        // They typically would be for controlling the physical pump motor or dispensing mechanism.
+                        // If they are meant as feedback pulses, ensure the sidepump expects this.
+                        HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET); // Assert signal (LOW)
+                        HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);   // De-assert signal (HIGH)
+                        break;
+                    case 2:
+                        pump2_volume++;
+                        sprintf(debug_msg, "Pump 2 event. P2:%lu, Tank:%lu\r\n", pump2_volume, petrol_tank_volume);
+                        HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_RESET);
+                        HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_SET);
+                        break;
+                    case 3:
+                        pump3_volume++;
+                        sprintf(debug_msg, "Pump 3 event. P3:%lu, Tank:%lu\r\n", pump3_volume, petrol_tank_volume);
+                        HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_RESET);
+                        HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_SET);
+                        break;
+                    case 4:
+                        pump4_volume++;
+                        sprintf(debug_msg, "Pump 4 event. P4:%lu, Tank:%lu\r\n", pump4_volume, petrol_tank_volume);
+                        HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_RESET);
+                        HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_SET);
+                        break;
+                    default:
+                        sprintf(debug_msg, "Unknown pump event ID: %u\r\n", received_pump_event_id);
+                        break;
+                }
+                HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+
+                // After updating, check if the tank has now become empty.
+                if (petrol_tank_volume == 0) {
+                    if (petrol_sufficient) { // Only change state and assert pins once
+                        petrol_sufficient = false; // Mark petrol as insufficient
+                        // Assert stop signals (drive LOW) to side boards
+                        HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
+                        HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
+                        sprintf(debug_msg, "Tank empty! Pumps stopped.\r\n");
+                        HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+                    }
+                } else {
+                    // If petrol was previously insufficient but now has some (e.g., refilled manually)
+                    if (!petrol_sufficient) {
+                        petrol_sufficient = true; // Mark petrol as sufficient
+                        // De-assert stop signals (drive HIGH) to allow pumps to start again
+                        HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_SET);
+                        HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
+                        sprintf(debug_msg, "Tank refilled! Pumps enabled.\r\n");
+                        HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+                    }
+                }
+            } else {
+                // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
+                sprintf(debug_msg, "PumpEventHandle: Failed to acquire semaphore!\r\n");
+                HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+            }
+            osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
+        }
+      }
+      /* USER CODE END func_pumpEventHandle */
+    }
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -834,9 +971,8 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
-    // Potentially toggle an LED to indicate error
-    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    HAL_Delay(100);
+      HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin); // Indicate error with LED toggle
+      HAL_Delay(100);
   }
   /* USER CODE END Error_Handler_Debug */
 }
@@ -846,7 +982,7 @@ void Error_Handler(void)
   * @brief  Reports the name of the source file and the source line number
   * where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
+  * line: assert_param error line source number
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
