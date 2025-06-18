@@ -67,21 +67,21 @@ UART_HandleTypeDef huart2;
 osThreadId_t updateLCDHandle;
 const osThreadAttr_t updateLCD_attributes = {
   .name = "updateLCD",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for updateCloud */
 osThreadId_t updateCloudHandle;
 const osThreadAttr_t updateCloud_attributes = {
   .name = "updateCloud",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for pumpEventHandle */
 osThreadId_t pumpEventHandleHandle;
 const osThreadAttr_t pumpEventHandle_attributes = {
   .name = "pumpEventHandle",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for pumpVolumeQueue */
@@ -101,19 +101,19 @@ const osSemaphoreAttr_t myBinarySem02_attributes = {
 };
 /* USER CODE BEGIN PV */
 //petrol tank volume
-uint32_t petrol_tank_volume = 1000000;
+volatile uint32_t petrol_tank_volume = 1000;
 
 //petrol pumped value for each pump
-uint32_t pump1_volume = 0;
-uint32_t pump2_volume = 0;
-uint32_t pump3_volume = 0;
-uint32_t pump4_volume = 0;
+volatile uint32_t pump1_volume = 0;
+volatile uint32_t pump2_volume = 0;
+volatile uint32_t pump3_volume = 0;
+volatile uint32_t pump4_volume = 0;
 
 //petrol pump activation status
-static bool pump1_status = false;
-static bool pump2_status = false;
-static bool pump3_status = false;
-static bool pump4_status = false;
+//static bool pump1_status = false;
+//static bool pump2_status = false;
+//static bool pump3_status = false;
+//static bool pump4_status = false;
 
 //petrol tank status
 static bool petrol_sufficient = true;
@@ -169,35 +169,23 @@ void func_pumpEventHandle(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-	if(petrol_tank_volume != 0){
-		if (GPIO_Pin == pump_1_info_Pin) {
-//			pump_event = 1;
-//			osMessageQueuePut(pumpleHandleQueueHandle, &pump_event, 0, 0);
-			pump1_status = !pump1_status;
-		}
-		if (GPIO_Pin == pump_2_info_Pin) {
-//			pump_event = 2;
-//			osMessageQueuePut(pumpleHandleQueueHandle, &pump_event, 0, 0);
-			pump2_status = !pump2_status;
-		}
-		if (GPIO_Pin == pump_3_info_Pin) {
-//			pump_event = 3;
-//			osMessageQueuePut(pumpleHandleQueueHandle, &pump_event, 0, 0);
-			pump3_status = !pump3_status;
-		}
-		if (GPIO_Pin == pump_4_info_Pin) {
-//			pump_event = 4;
-//			osMessageQueuePut(pumpleHandleQueueHandle, &pump_event, 0, 0);
-			pump4_status = !pump4_status;
-		}
+	 uint16_t current_pump_event_id = 0; // Local variable for the event ID
 
-	}else{
-		HAL_GPIO_WritePin(GPIOA,stop_Board1_Pin,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOA,stop_Board1_Pin,GPIO_PIN_SET);
+	    if (GPIO_Pin == pump_1_info_Pin) {
+	        current_pump_event_id = 1;
+	    } else if (GPIO_Pin == pump_2_info_Pin) {
+	        current_pump_event_id = 2;
+	    } else if (GPIO_Pin == pump_3_info_Pin) {
+	        current_pump_event_id = 3;
+	    } else if (GPIO_Pin == pump_4_info_Pin) {
+	        current_pump_event_id = 4;
+	    }
 
-		HAL_GPIO_WritePin(GPIOA,stop_Board2_Pin,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOA,stop_Board2_Pin,GPIO_PIN_SET);
-	}
+	    // Only put a valid event into the queue if a known pump pin triggered it.
+	    // Use osWaitNone (0) as timeout in ISR context to avoid blocking.
+	    if (current_pump_event_id != 0) {
+	        osMessageQueuePut(pumpVolumeQueueHandle, &current_pump_event_id, 0, 0);
+	    }
 }
 
 
@@ -280,27 +268,6 @@ void W5500Init() {
 	wizchip_setnetinfo(&net_info);
 }
 
-void update_Board1(){
-	if(pump1_status){
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_SET);
-	}
-	if(pump2_status){
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_SET);
-	}
-}
-
-void update_Board2(){
-	if(pump3_status){
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_1,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_1,GPIO_PIN_SET);
-	}
-	if(pump4_status){
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_15,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_15,GPIO_PIN_SET);
-	}
-}
 /* USER CODE END 0 */
 
 /**
@@ -582,7 +549,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI_Chip_Select_GPIO_Port, SPI_Chip_Select_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, pump1_volume_inc_Pin|pump2_volume_inc_Pin|stop_Board1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
@@ -597,8 +564,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SPI_Chip_Select_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump1_volume_inc_Pin pump2_volume_inc_Pin stop_Board1_Pin */
-  GPIO_InitStruct.Pin = pump1_volume_inc_Pin|pump2_volume_inc_Pin|stop_Board1_Pin;
+  /*Configure GPIO pins : pump2_volume_inc_Pin pump1_volume_inc_Pin stop_Board1_Pin */
+  GPIO_InitStruct.Pin = pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -723,49 +690,73 @@ void func_pumpEventHandle(void *argument)
 {
   /* USER CODE BEGIN func_pumpEventHandle */
   /* Infinite loop */
-  unsigned int x;
+  uint16_t received_pump_event_id;
+  char debug_msg[100];
   for(;;)
   {
-	 if(petrol_tank_volume == 0){
-		 sprintf(message, "Petrol Fuel Tank is Empty");
-		 ITM_SendChar(message);
-		 osDelay(osWaitForever);
-	 }else{
-		 if(pump1_status){
-			 osMessageQueueGet(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-			 petrol_tank_volume--;
-			 pump1_volume++;
-		     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET);
-			 HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_SET);
-			 osMessageQueuePut(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
+	  if (osMessageQueueGet(pumpVolumeQueueHandle, &received_pump_event_id, NULL, osWaitForever) == osOK) {
+			 if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
+	             // Check if there's petrol left before decrementing the tank volume.
+	             if (petrol_tank_volume > 0) {
+	                 petrol_tank_volume--; // Decrement the main tank volume
 
-		 }else if(pump2_status){
-			 osMessageQueueGet(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-			 petrol_tank_volume--;
-			 pump2_volume++;
-			 HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_RESET);
-			 HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_SET);
-			 osMessageQueuePut(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
+	                 // Increment the volume for the specific pump that triggered the event.
+	                 switch (received_pump_event_id) {
+	                     case 1:
+	                         pump1_volume++;
+	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET); // Assert signal (LOW)
+	                         osDelay(1);
+	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
+	                         osDelay(1);// De-assert signal (HIGH)
+	                         break;
+	                     case 2:
+	                         pump2_volume++;
+	                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_RESET);
+	                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_SET);
+	                         break;
+	                     case 3:
+	                         pump3_volume++;
+	                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_RESET);
+	                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_SET);
+	                         break;
+	                     case 4:
+	                         pump4_volume++;
+	                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_RESET);
+	                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_SET);
+	                         break;
+	                     default:
+	                         sprintf(debug_msg, "Unknown pump event ID: %u\r\n", received_pump_event_id);
+	                         break;
+	                 }
 
-		 }else if(pump3_status){
-			 osMessageQueueGet(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-			 petrol_tank_volume--;
-			 pump3_volume++;
-			 HAL_GPIO_WritePin(GPIOB,GPIO_PIN_1,GPIO_PIN_RESET);
-			 HAL_GPIO_WritePin(GPIOB,GPIO_PIN_1,GPIO_PIN_SET);
-			 osMessageQueuePut(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-
-		 }else if(pump4_status){
-			 osMessageQueueGet(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-			 petrol_tank_volume--;
-			 pump4_volume++;
-			 HAL_GPIO_WritePin(GPIOB,GPIO_PIN_15,GPIO_PIN_RESET);
-			 HAL_GPIO_WritePin(GPIOB,GPIO_PIN_15,GPIO_PIN_SET);
-			 osMessageQueuePut(pumpVolumeQueueHandle,&petrol_tank_volume,0,osWaitForever);
-		 }
-
-
-	 }
+	                 // After updating, check if the tank has now become empty.
+	                 if (petrol_tank_volume == 0) {
+	                     if (petrol_sufficient) { // Only change state and assert pins once
+	                         petrol_sufficient = false; // Mark petrol as insufficient
+	                         // Assert stop signals (drive LOW) to side boards
+	                         HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
+	                         HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
+	                         sprintf(debug_msg, "Tank empty! Pumps stopped.\r\n");
+	                     }
+	                 } else {
+	                     // If petrol was previously insufficient but now has some (e.g., refilled manually)
+	                     if (!petrol_sufficient) {
+	                         petrol_sufficient = true; // Mark petrol as sufficient
+	                         // De-assert stop signals (drive HIGH) to allow pumps to start again
+	                         HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_SET);
+	                         HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
+	                         sprintf(debug_msg, "Tank refilled! Pumps enabled.\r\n");
+	                         HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+	                     }
+	                 }
+	             } else {
+	                 // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
+	                 sprintf(debug_msg, "PumpEventHandle: Failed to acquire semaphore!\r\n");
+	                 HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+	             }
+	             osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
+	         }
+	       }
   }
   /* USER CODE END func_pumpEventHandle */
 }
