@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include "i2c-lcd.h"
 #include "stdio.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,6 +36,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define DEBOUNCE_TIME 150
+#define PULSE_DELAY_MS 10
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,21 +53,21 @@ UART_HandleTypeDef huart2;
 osThreadId_t pump1Handle;
 const osThreadAttr_t pump1_attributes = {
   .name = "pump1",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for pump2 */
 osThreadId_t pump2Handle;
 const osThreadAttr_t pump2_attributes = {
   .name = "pump2",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for LCD */
 osThreadId_t LCDHandle;
 const osThreadAttr_t LCD_attributes = {
   .name = "LCD",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for pumpSemaphore */
@@ -75,15 +77,15 @@ const osSemaphoreAttr_t pumpSemaphore_attributes = {
 };
 /* USER CODE BEGIN PV */
 //petrol pumped for each pumper
-uint32_t pump1_volume = 0;
-uint32_t pump2_volume = 0;
+volatile uint32_t pump1_volume = 0;
+volatile uint32_t pump2_volume = 0;
 
 //activation status of each pump
-static bool pump1_status = false;
-static bool pump2_status = false;
+volatile static bool pump1_status = false;
+volatile static bool pump2_status = false;
 //pump signal
-static bool pump1_signal_inc = false;
-static bool pump2_signal_inc = false;
+//static bool pump1_signal_inc = false;
+//static bool pump2_signal_inc = false;
 
 //timing analysis
 uint32_t timer_start = 0;
@@ -119,26 +121,33 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 		if(GPIO_Pin == stop_board1_Pin ){
 			pump1_status = false;
 			pump2_status = false;
-		}
 
-
-		if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-			lastDebounceTime = currentTime;
-
+		}else {
 			if(GPIO_Pin == start_stop_pump1_button_Pin){
-				pump1_status = !pump1_status;
 
+				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+					lastDebounceTime = currentTime;
+					pump1_status = !pump1_status;
+					if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
+						pump1_status = false; // Force stop if mainboard indicates empty
+					}
+				}
 			}else if(GPIO_Pin == start_stop_pump2_button_Pin){
-				pump2_status = !pump2_status;
+				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+					lastDebounceTime = currentTime;
+					pump2_status = !pump2_status;
+					if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
+					pump2_status = false; // Force stop if mainboard indicates empty
+				}
 			}
 		}
 
-		if(GPIO_Pin ==pump1_inc_signal_Pin){
-			pump1_signal_inc = !pump1_signal_inc;
-		}else if(GPIO_Pin ==pump2_inc_signal_Pin){
-			pump2_signal_inc = !pump2_signal_inc;
-		}
-
+//			if(GPIO_Pin == pump1_inc_signal_Pin ){
+//				pump1_volume++;
+//			}else if(GPIO_Pin == pump2_inc_signal_Pin){
+//				pump2_volume++;
+//			}
+	}
 }
 void scan_i2c_devices(void) {
     HAL_StatusTypeDef result;
@@ -404,8 +413,8 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : pump1_inc_signal_Pin pump2_inc_signal_Pin */
   GPIO_InitStruct.Pin = pump1_inc_signal_Pin|pump2_inc_signal_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : pump2_petrol_signal_Pin pump1_petrol_signal_Pin */
@@ -447,17 +456,22 @@ void func_pump1(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	//osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
-    if(pump1_status){
-    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
-    	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
+	  if(pump1_status){
+		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
+		//  osDelay(pdMS_TO_TICKS(1));
+		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
 
-    }
-    if(pump1_signal_inc){
-    	pump1_volume++;
-    }
+//	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
+		  pump1_volume++;
+		  osDelay(2);
+		//  osSemaphoreRelease(pumpSemaphoreHandle);
+//	  }
+//	  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS));
 
-    //osSemaphoreRelease(pumpSemaphoreHandle);
+    }else{
+	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
+	  //osDelay(pdMS_TO_TICKS(100));
+    }
   }
   /* USER CODE END 5 */
 }
@@ -475,15 +489,24 @@ void func_pump2(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  //osSemaphoreAcquire(pumpSemaphoreHandle,osWaitForever);
 	  if(pump2_status){
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
-	  }
-	  if(pump2_signal_inc){
-	    	pump2_volume++;
-	  }
-	  //osSemaphoreRelease(pumpSemaphoreHandle);
+		   // Generate a single pulse for the mainboard to count
+		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
+		//  osDelay(pdMS_TO_TICKS(1)); // Small delay to create a pulse width
+		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);   // Pulse HIGH (idle state)
+
+		   // Increment local volume counter (for display on this sidepump's LCD)
+//		  if (HAL_GPIO_ReadPin(GPIOB,pump2_inc_signal_Pin) == GPIO_PIN_RESET) {
+			   pump2_volume++;
+			   osDelay(2);
+//	  }
+
+		 //  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS)); // **CRITICAL: Control the pulse generation rate.**
+	   } else {
+		   // If pump is not active or stop signal is active, ensure signal is HIGH (idle)
+		   HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
+		//   osDelay(pdMS_TO_TICKS(100)); // Sleep when not pumping
+	   }
   }
   /* USER CODE END func_pump2 */
 }
@@ -511,7 +534,7 @@ void updateLCD(void *argument)
 		      lcd_put_cur(1, 0);
 		      sprintf(message, "Pump2: %lu L", pump2_volume);
 		      lcd_send_string(message);
-		      osDelay(2000);
+		      osDelay(1);
 	        osSemaphoreRelease(pumpSemaphoreHandle); // Release semaphore
 	    }
   }
