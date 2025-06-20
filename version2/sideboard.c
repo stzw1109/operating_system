@@ -141,12 +141,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 				}
 			}
 		}
-
-//			if(GPIO_Pin == pump1_inc_signal_Pin ){
-//				pump1_volume++;
-//			}else if(GPIO_Pin == pump2_inc_signal_Pin){
-//				pump2_volume++;
-//			}
 	}
 }
 void scan_i2c_devices(void) {
@@ -411,10 +405,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(stop_board1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump1_inc_signal_Pin pump2_inc_signal_Pin */
-  GPIO_InitStruct.Pin = pump1_inc_signal_Pin|pump2_inc_signal_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  /*Configure GPIO pins : pump1_signal_inc_Pin pump2_signal_inc_Pin */
+  GPIO_InitStruct.Pin = pump1_signal_inc_Pin|pump2_signal_inc_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : pump2_petrol_signal_Pin pump1_petrol_signal_Pin */
@@ -431,6 +425,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
