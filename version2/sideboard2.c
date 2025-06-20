@@ -139,11 +139,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 			}
 		}
 
-//			if(GPIO_Pin == pump1_inc_signal_Pin ){
-//				pump1_volume++;
-//			}else if(GPIO_Pin == pump2_inc_signal_Pin){
-//				pump2_volume++;
-//			}
 	}
 }
 void scan_i2c_devices(void) {
@@ -510,13 +505,13 @@ void func_pump4(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  if(pump3_status){
+	  if(pump4_status){
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_RESET);
 			//  osDelay(pdMS_TO_TICKS(1));
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
 
 	  //	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
-			  pump3_volume++;
+			  pump4_volume++;
 			  osDelay(2);
 			//  osSemaphoreRelease(pumpSemaphoreHandle);
 	  //	  }
