@@ -26,6 +26,12 @@
 #include <stdio.h>
 #include "wizchip_conf.h"
 #include <string.h>
+#include "socket.h"
+#include "dhcp.h"
+#include "i2c-lcd.h"
+#include "w5500.h"
+#include "Network.h"
+
 //#include "MQTTClient.h"
 /* USER CODE END Includes */
 
@@ -49,6 +55,7 @@
 #define PORT_TCPS       5000
 #define PORT_UDPS       3000
 #define MAX_HTTPSOCK    6
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -101,7 +108,7 @@ const osSemaphoreAttr_t myBinarySem02_attributes = {
 };
 /* USER CODE BEGIN PV */
 //petrol tank volume
-volatile uint32_t petrol_tank_volume = 1000;
+volatile uint32_t petrol_tank_volume = 10000;
 
 //petrol pumped value for each pump
 volatile uint32_t pump1_volume = 0;
@@ -145,7 +152,8 @@ unsigned int buffer;
 /* USER CODE BEGIN PV */
 //Network network;
 //MQTTClient client;
-unsigned char sendbuf[100], readbuf[100];
+//unsigned char sendbuf[100], readbuf[100];
+//MQTTMessage message;
 //MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
 
 //message queue stuff
@@ -190,11 +198,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 
 
 void wizchip_select(void) {
-	HAL_GPIO_WritePin(W5500_CS_PORT, W5500_CS_PIN, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
 }
 
 void wizchip_deselect(void)  {
-	HAL_GPIO_WritePin(W5500_CS_PORT, W5500_CS_PIN, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_SET);
 }
 
 void wizchipWriteBurst(uint8_t* buff, uint16_t len) {
@@ -305,7 +313,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   lcd_init();
   //w5500 section
-  //W5500Init();
+  W5500Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -646,14 +654,14 @@ void func_updateCloud(void *argument)
   /* Infinite loop */
   for(;;)
   {
-//	  mqttnetwork_connect(&network, "your-cluster-id.s1.eu.hivemq.cloud", 8883); // Use 8883 for TLS or 1883 for no TLS
+//	  mqttnetwork_connect(&network, "broker.hivemq.com", 1883);
 //
 //	   MQTTClientInit(&client, &network, 5000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
 //
 //	   connectData.MQTTVersion = 3;
 //	   connectData.clientID.cstring = "STM32Client";
-//	   connectData.username.cstring = "b022210152";  // Replace with HiveMQ username
-//	   connectData.password.cstring = "b022210152UTEM!";  // Replace with HiveMQ password
+//	   connectData.username.cstring = NULL;
+//	   connectData.password.cstring = NULL;
 //
 //	   if (MQTTConnect(&client, &connectData) != SUCCESS)
 //	   {
@@ -704,10 +712,10 @@ void func_pumpEventHandle(void *argument)
 	                 switch (received_pump_event_id) {
 	                     case 1:
 	                         pump1_volume++;
-	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET); // Assert signal (LOW)
-	                         osDelay(1);
+	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET);
+//	                         osDelay(1);
 	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
-	                         osDelay(1);// De-assert signal (HIGH)
+//	                         osDelay(1);
 	                         break;
 	                     case 2:
 	                         pump2_volume++;
