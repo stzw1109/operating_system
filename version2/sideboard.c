@@ -121,28 +121,30 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 		if(GPIO_Pin == stop_board1_Pin ){
 			pump1_status = false;
 			pump2_status = false;
+		}
 
-		}else {
-			if(GPIO_Pin == start_stop_pump1_button_Pin){
+		if(GPIO_Pin == start_stop_pump1_button_Pin){
 
-				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-					lastDebounceTime = currentTime;
-					pump1_status = !pump1_status;
-					if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
-						pump1_status = false; // Force stop if mainboard indicates empty
-					}
+			if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+				lastDebounceTime = currentTime;
+				pump1_status = !pump1_status;
+				if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
+					pump1_status = false; // Force stop if mainboard indicates empty
 				}
-			}else if(GPIO_Pin == start_stop_pump2_button_Pin){
-				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-					lastDebounceTime = currentTime;
-					pump2_status = !pump2_status;
-					if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
-					pump2_status = false; // Force stop if mainboard indicates empty
-				}
+			}
+		}else if(GPIO_Pin == start_stop_pump2_button_Pin){
+			if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+				lastDebounceTime = currentTime;
+				pump2_status = !pump2_status;
+				if (HAL_GPIO_ReadPin(stop_board1_GPIO_Port, stop_board1_Pin) == GPIO_PIN_RESET) {
+				pump2_status = false; // Force stop if mainboard indicates empty
 			}
 		}
 	}
+
+	//}
 }
+
 void scan_i2c_devices(void) {
     HAL_StatusTypeDef result;
     uint8_t i;
@@ -428,6 +430,9 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);
 
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -455,7 +460,6 @@ void func_pump1(void *argument)
   {
 	  if(pump1_status){
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
-		//  osDelay(pdMS_TO_TICKS(1));
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
 
 //	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
@@ -463,11 +467,8 @@ void func_pump1(void *argument)
 		  osDelay(2);
 		//  osSemaphoreRelease(pumpSemaphoreHandle);
 //	  }
-//	  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS));
-
     }else{
 	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
-	  //osDelay(pdMS_TO_TICKS(100));
     }
   }
   /* USER CODE END 5 */
