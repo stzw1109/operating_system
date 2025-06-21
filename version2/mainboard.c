@@ -120,7 +120,7 @@ const osSemaphoreAttr_t myBinarySem02_attributes = {
 };
 /* USER CODE BEGIN PV */
 //petrol tank volume
-volatile uint32_t petrol_tank_volume = 10000;
+volatile uint32_t petrol_tank_volume = 50000;
 
 //petrol pumped value for each pump
 volatile uint32_t pump1_volume = 0;
@@ -128,14 +128,6 @@ volatile uint32_t pump2_volume = 0;
 volatile uint32_t pump3_volume = 0;
 volatile uint32_t pump4_volume = 0;
 
-//petrol pump activation status
-//static bool pump1_status = false;
-//static bool pump2_status = false;
-//static bool pump3_status = false;
-//static bool pump4_status = false;
-
-//petrol tank status
-static bool petrol_sufficient = true;
 
 //timing analysis
 uint32_t timer_start = 0;
@@ -287,26 +279,6 @@ void W5500Init() {
 	wizchip_setnetinfo(&net_info);
 }
 
-//MQTT
-void stop_board(int board_num) {
-    if (board_num == 1) {
-        HAL_GPIO_WritePin(GPIOA, stop_Board1_Pin, GPIO_PIN_RESET);
-    } else if (board_num == 2) {
-        HAL_GPIO_WritePin(GPIOB, stop_Board2_Pin, GPIO_PIN_RESET);
-    }
-}
-
-
-void messageArrived(MessageData* data) {
-    char payload[10] = {0};
-    memcpy(payload, data->message->payload, data->message->payloadlen);
-    if (strcmp(payload, "1") == 0) {
-        stop_board(1);
-    } else if (strcmp(payload, "2") == 0) {
-        stop_board(2);
-    }
-}
-
 void ITM_Printf(const char *msg) {
     while (*msg) {
         ITM_SendChar(*msg++);
@@ -321,6 +293,31 @@ void ITM_PrintfFmt(const char *fmt, ...) {
     va_end(args);
     ITM_Printf(buf);
 }
+
+//MQTT
+void stop_board(int board_num) {
+    if (board_num == 1) {
+        HAL_GPIO_WritePin(GPIOA, stop_Board1_Pin, GPIO_PIN_RESET);
+    } else if (board_num == 2) {
+        HAL_GPIO_WritePin(GPIOC, stop_Board2_Pin, GPIO_PIN_RESET);
+    }
+}
+
+
+void messageArrived(MessageData* data) {
+    char payload[10] = {0};
+    memcpy(payload, data->message->payload, data->message->payloadlen);
+    if (strcmp(payload, "1") == 0) {
+        stop_board(1);
+        ITM_Printf("Stop signal received for Board 1\r\n");
+        
+    } else if (strcmp(payload, "2") == 0) {
+        stop_board(2);
+        ITM_Printf("Stop signal received for Board 2\r\n");
+    }
+}
+
+
 
 int resolve_hostname(const char *hostname, uint8_t *resolved_ip) {
     uint8_t dns_server_ip[4] = {8, 8, 8, 8};  // Or use getDNSfromDHCP() if dynamic
@@ -348,7 +345,64 @@ void vApplicationTickHook(void) {
 
 void reconnecting_MQTT(){
   ITM_Printf("Reconnecting MQTT...\r\n");
- 
+  while (1) {
+        run_mqtt_loop();
+        ITM_Printf("MQTT loop exited, reattempting to reconnect \r\n");
+        osDelay(2000); // Wait before retrying
+    }
+}
+
+void run_mqtt_loop() {
+    int result = mqttnetwork_connect(&network, MQTT_HOST, MQTT_PORT);
+    if (result == 0) {
+        ITM_Printf("MQTT network connection successful!\r\n");
+    } else {
+        ITM_Printf("MQTT network connection failed!\r\n");
+        return;
+    }
+
+    MQTTClientInit(&client, &network, 1000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
+
+    MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
+    connectData.MQTTVersion = 3;
+    connectData.clientID.cstring = CLIENT_ID;
+
+    int rc = MQTTConnect(&client, &connectData);
+    if (rc == MQTT_SUCCESS) {
+        ITM_Printf("MQTT broker connection successful!\r\n");
+    } else {
+        ITM_Printf("MQTT broker connection failed!\r\n");
+        return;
+    }
+
+    MQTTSubscribe(&client, SUB_TOPIC, QOS0, messageArrived);
+
+    while (1) {
+        char msg[100];
+        snprintf(msg, sizeof(msg), "Petrol Tank Volume: %lu", petrol_tank_volume);
+        MQTTMessage message;
+        message.qos = QOS0;
+        message.retained = 0;
+        message.payload = msg;
+        message.payloadlen = strlen(msg);
+
+        int pub_rc = MQTTPublish(&client, PUB_TOPIC, &message);
+        if (pub_rc != MQTT_SUCCESS) {
+            ITM_PrintfFmt("Publish failed: %d\r\n", pub_rc);
+            break; // Exit loop to trigger reconnect
+        } else {
+            ITM_Printf("Publish OK\r\n");
+        }
+
+        ITM_Printf("Before MQTTYield\r\n");
+        int yield_rc = MQTTYield(&client, 1000);
+        ITM_Printf("After MQTTYield\r\n");
+        if (yield_rc != MQTT_SUCCESS) {
+            ITM_PrintfFmt("Yield failed: %d\r\n", yield_rc);
+            break; // Exit loop to trigger reconnect
+        }
+        osDelay(1000);
+    }
 }
 /* USER CODE END 0 */
 
@@ -726,56 +780,11 @@ void func_updateLCD(void *argument)
 void func_updateCloud(void *argument)
 {
   /* USER CODE BEGIN func_updateCloud */
-  int result = mqttnetwork_connect(&network, MQTT_HOST, MQTT_PORT);
-  if (result == 0) {
-    ITM_Printf("MQTT network connection successful!\r\n");
-  } else {
-    ITM_Printf("MQTT network connection failed!\r\n");
-  }
-    // Handle network error}
-   MQTTClientInit(&client, &network, 1000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
-
-   MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
-   connectData.MQTTVersion = 3;
-   connectData.clientID.cstring = CLIENT_ID;
-
-  int rc = MQTTConnect(&client, &connectData);
-  if (rc == MQTT_SUCCESS) {
-      ITM_Printf("MQTT broker connection successful!\r\n");
-  } else {
-      ITM_Printf("MQTT broker connection failed!\r\n");
-  }
-
-   MQTTSubscribe(&client, SUB_TOPIC, QOS0, messageArrived);
-  /* Infinite loop */
-  for(;;)
-  {
-     char msg[100];
-     snprintf(msg, sizeof(msg), "Petrol Tank Volume: %lu", petrol_tank_volume);
-     MQTTMessage message;
-     message.qos = QOS0;
-     message.retained = 0;
-     message.payload = msg;
-     message.payloadlen = strlen(msg);
-
-     int pub_rc = MQTTPublish(&client, PUB_TOPIC, &message);
-     if (pub_rc != MQTT_SUCCESS) {
-        ITM_PrintfFmt("Publish failed: %d\r\n", pub_rc);
-        //reconnecting_MQTT();// Attempt to reconnect if publish fails
-      } else {
-        ITM_Printf("Publish OK\r\n");
-    }
-
-    ITM_Printf("Before MQTTYield\r\n");
-    int yield_rc = MQTTYield(&client, 1000);
-    ITM_Printf("After MQTTYield\r\n");
-    if (yield_rc != MQTT_SUCCESS) {
-        ITM_PrintfFmt("Yield failed: %d\r\n", yield_rc);
-        //reconnecting_MQTT();// Attempt to reconnect if yield fails
-    }
-     // ...your existing code in the loop...
-     osDelay(1000);
- }
+  reconnecting_MQTT();
+//   for(;;)
+//   {
+    
+//  }
 
 }
   /* USER CODE END func_updateCloud */
@@ -807,9 +816,7 @@ void func_pumpEventHandle(void *argument)
 	                     case 1:
 	                         pump1_volume++;
 	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET);
-//	                         osDelay(1);
 	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
-//	                         osDelay(1);
 	                         break;
 	                     case 2:
 	                         pump2_volume++;
@@ -830,35 +837,20 @@ void func_pumpEventHandle(void *argument)
 	                         sprintf(debug_msg, "Unknown pump event ID: %u\r\n", received_pump_event_id);
 	                         break;
 	                 }
-
-	                 // After updating, check if the tank has now become empty.
-	                 if (petrol_tank_volume == 0) {
-	                     if (petrol_sufficient) { // Only change state and assert pins once
-	                         petrol_sufficient = false; // Mark petrol as insufficient
-	                         // Assert stop signals (drive LOW) to side boards
-	                         HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
-	                         HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
-	                         sprintf(debug_msg, "Tank empty! Pumps stopped.\r\n");
-	                     }
-	                 } else {
-	                     // If petrol was previously insufficient but now has some (e.g., refilled manually)
-	                     if (!petrol_sufficient) {
-	                         petrol_sufficient = true; // Mark petrol as sufficient
-	                         // De-assert stop signals (drive HIGH) to allow pumps to start again
-	                         HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_SET);
-	                         HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
-	                         sprintf(debug_msg, "Tank refilled! Pumps enabled.\r\n");
-	                         HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
-	                     }
-	                 }
 	             } else {
-	                 // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
-	                 sprintf(debug_msg, "PumpEventHandle: Failed to acquire semaphore!\r\n");
-	                 HAL_UART_Transmit(&huart2, (uint8_t*)debug_msg, strlen(debug_msg), HAL_MAX_DELAY);
+                    // Assert stop signals (drive LOW) to side boards
+                    //board 1
+                    HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
+                    //board 2
+                    HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
+                    ITM_Printf("\nTank Empty. All pump stop\r\n");
 	             }
 	             osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
-	         }
-	       }
+	         }else{
+              // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
+              ITM_Printf("PumpEventHandle: Failed to acquire semaphore!\r\n");
+          }
+      }
   }
   /* USER CODE END func_pumpEventHandle */
 }
