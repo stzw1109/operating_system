@@ -118,28 +118,28 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 		if(GPIO_Pin == stop_board2_Pin ){
 			pump3_status = false;
 			pump4_status = false;
-
-		}else {
-			if(GPIO_Pin == start_stop_pump3_button_Pin){
-
-				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-					lastDebounceTime = currentTime;
-					pump3_status = !pump3_status;
-					if (HAL_GPIO_ReadPin(stop_board2_GPIO_Port, stop_board2_Pin) == GPIO_PIN_RESET) {
-						pump3_status = false; // Force stop if mainboard indicates empty
-					}
-				}
-			}else if(GPIO_Pin == start_stop_pump4_button_Pin){
-				if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
-					lastDebounceTime = currentTime;
-					pump4_status = !pump4_status;
-					if (HAL_GPIO_ReadPin(stop_board2_GPIO_Port, stop_board2_Pin) == GPIO_PIN_RESET) {
-					pump4_status = false; // Force stop if mainboard indicates empty
-				}
-			}
 		}
 
+		if(GPIO_Pin == start_stop_pump3_button_Pin){
+
+			if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+				lastDebounceTime = currentTime;
+				pump3_status = !pump3_status;
+				if (HAL_GPIO_ReadPin(stop_board2_GPIO_Port, stop_board2_Pin) == GPIO_PIN_RESET) {
+					pump3_status = false; // Force stop if mainboard indicates empty
+				}
+			}
+		}else if(GPIO_Pin == start_stop_pump4_button_Pin){
+			if((currentTime - lastDebounceTime)> pdMS_TO_TICKS(DEBOUNCE_TIME)){
+				lastDebounceTime = currentTime;
+				pump4_status = !pump4_status;
+				if (HAL_GPIO_ReadPin(stop_board2_GPIO_Port, stop_board2_Pin) == GPIO_PIN_RESET) {
+				pump4_status = false; // Force stop if mainboard indicates empty
+			}
+		}
 	}
+
+	//}
 }
 void scan_i2c_devices(void) {
     HAL_StatusTypeDef result;
@@ -405,8 +405,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump4_signal_inc_Pin pump3_signal_inc_Pin */
-  GPIO_InitStruct.Pin = pump4_signal_inc_Pin|pump3_signal_inc_Pin;
+  /*Configure GPIO pins : pump4_signal_inc_Pin pump3_signal_inc_Pin stop_board2_Pin */
+  GPIO_InitStruct.Pin = pump4_signal_inc_Pin|pump3_signal_inc_Pin|stop_board2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -423,12 +423,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : stop_board2_Pin */
-  GPIO_InitStruct.Pin = stop_board2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(stop_board2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PC10 PC12 */
   GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_12;
