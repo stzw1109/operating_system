@@ -28,11 +28,16 @@
 #include <string.h>
 #include "socket.h"
 #include "dhcp.h"
+
 #include "i2c-lcd.h"
+
 #include "w5500.h"
 #include "Network.h"
+#include "MQTTClient.h"
+#include <stdarg.h>
+#include "dns.h"
 
-//#include "MQTTClient.h"
+#include "core_cm4.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,7 +60,14 @@
 #define PORT_TCPS       5000
 #define PORT_UDPS       3000
 #define MAX_HTTPSOCK    6
+#define configUSE_TICK_HOOK 1
 
+//for MQTT
+#define MQTT_HOST "broker.hivemq.com"
+#define MQTT_PORT 1883
+#define CLIENT_ID "stm32client"
+#define PUB_TOPIC "mainboard/petrol/volume"
+#define SUB_TOPIC "mainboard/stop"
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,7 +93,7 @@ const osThreadAttr_t updateLCD_attributes = {
 osThreadId_t updateCloudHandle;
 const osThreadAttr_t updateCloud_attributes = {
   .name = "updateCloud",
-  .stack_size = 512 * 4,
+  .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for pumpEventHandle */
@@ -144,17 +156,16 @@ wiz_NetInfo net_info = {
     .dhcp = NETINFO_DHCP
 };
 
-char message[100];
+
 char charData[200]; // Data holder
 unsigned int buffer;
 
 //MQTT stuff
 /* USER CODE BEGIN PV */
-//Network network;
-//MQTTClient client;
-//unsigned char sendbuf[100], readbuf[100];
-//MQTTMessage message;
-//MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
+MQTTClient client;
+Network network;
+unsigned char sendbuf[128], readbuf[128];
+
 
 //message queue stuff
 uint16_t pump_event = 0;
@@ -276,6 +287,69 @@ void W5500Init() {
 	wizchip_setnetinfo(&net_info);
 }
 
+//MQTT
+void stop_board(int board_num) {
+    if (board_num == 1) {
+        HAL_GPIO_WritePin(GPIOA, stop_Board1_Pin, GPIO_PIN_RESET);
+    } else if (board_num == 2) {
+        HAL_GPIO_WritePin(GPIOB, stop_Board2_Pin, GPIO_PIN_RESET);
+    }
+}
+
+
+void messageArrived(MessageData* data) {
+    char payload[10] = {0};
+    memcpy(payload, data->message->payload, data->message->payloadlen);
+    if (strcmp(payload, "1") == 0) {
+        stop_board(1);
+    } else if (strcmp(payload, "2") == 0) {
+        stop_board(2);
+    }
+}
+
+void ITM_Printf(const char *msg) {
+    while (*msg) {
+        ITM_SendChar(*msg++);
+    }
+}
+
+void ITM_PrintfFmt(const char *fmt, ...) {
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    ITM_Printf(buf);
+}
+
+int resolve_hostname(const char *hostname, uint8_t *resolved_ip) {
+    uint8_t dns_server_ip[4] = {8, 8, 8, 8};  // Or use getDNSfromDHCP() if dynamic
+
+    DNS_init(DNS_SOCKET, dns_buffer);
+
+    if (DNS_run(dns_server_ip, (uint8_t *)hostname, resolved_ip) != 1) {
+        ITM_PrintfFmt("DNS resolution failed for %s\r\n", hostname);
+        return -1;
+    }
+
+    ITM_PrintfFmt("Resolved %s to %d.%d.%d.%d\r\n", hostname,
+               resolved_ip[0], resolved_ip[1], resolved_ip[2], resolved_ip[3]);
+    return 0;
+}
+
+void vApplicationTickHook(void) {
+    static uint32_t counter = 0;
+    counter++;
+    if (counter >= 1000) { // assuming 1ms tick
+        counter = 0;
+        DNS_time_handler();
+    }
+}
+
+void reconnecting_MQTT(){
+  ITM_Printf("Reconnecting MQTT...\r\n");
+ 
+}
 /* USER CODE END 0 */
 
 /**
@@ -312,6 +386,7 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   lcd_init();
+  DNS_time_handler();
   //w5500 section
   W5500Init();
   /* USER CODE END 2 */
@@ -651,41 +726,60 @@ void func_updateLCD(void *argument)
 void func_updateCloud(void *argument)
 {
   /* USER CODE BEGIN func_updateCloud */
+  int result = mqttnetwork_connect(&network, MQTT_HOST, MQTT_PORT);
+  if (result == 0) {
+    ITM_Printf("MQTT network connection successful!\r\n");
+  } else {
+    ITM_Printf("MQTT network connection failed!\r\n");
+  }
+    // Handle network error}
+   MQTTClientInit(&client, &network, 1000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
+
+   MQTTPacket_connectData connectData = MQTTPacket_connectData_initializer;
+   connectData.MQTTVersion = 3;
+   connectData.clientID.cstring = CLIENT_ID;
+
+  int rc = MQTTConnect(&client, &connectData);
+  if (rc == MQTT_SUCCESS) {
+      ITM_Printf("MQTT broker connection successful!\r\n");
+  } else {
+      ITM_Printf("MQTT broker connection failed!\r\n");
+  }
+
+   MQTTSubscribe(&client, SUB_TOPIC, QOS0, messageArrived);
   /* Infinite loop */
   for(;;)
   {
-//	  mqttnetwork_connect(&network, "broker.hivemq.com", 1883);
-//
-//	   MQTTClientInit(&client, &network, 5000, sendbuf, sizeof(sendbuf), readbuf, sizeof(readbuf));
-//
-//	   connectData.MQTTVersion = 3;
-//	   connectData.clientID.cstring = "STM32Client";
-//	   connectData.username.cstring = NULL;
-//	   connectData.password.cstring = NULL;
-//
-//	   if (MQTTConnect(&client, &connectData) != SUCCESS)
-//	   {
-//	     ITM_SendChar('F');  // connection failed
-//	     vTaskDelete(NULL);
-//	   }
-//
-//	   MQTTMessage message;
-//	   message.qos = QOS0;
-//	   message.retained = 0;
-//	   message.payload = sendbuf;
-//
-//	   while (1)
-//	   {
-//	     snprintf((char *)sendbuf, sizeof(sendbuf), "Petrol Volume: %lu", petrol_tank_volume);
-//	     message.payloadlen = strlen((char *)sendbuf);
-//
-//	     MQTTPublish(&client, "stm32/petrol", &message);
-//
-//	     osDelay(5000); // Wait 5 seconds
-//	   }
-  }
-  /* USER CODE END func_updateCloud */
+     char msg[100];
+     snprintf(msg, sizeof(msg), "Petrol Tank Volume: %lu", petrol_tank_volume);
+     MQTTMessage message;
+     message.qos = QOS0;
+     message.retained = 0;
+     message.payload = msg;
+     message.payloadlen = strlen(msg);
+
+     int pub_rc = MQTTPublish(&client, PUB_TOPIC, &message);
+     if (pub_rc != MQTT_SUCCESS) {
+        ITM_PrintfFmt("Publish failed: %d\r\n", pub_rc);
+        //reconnecting_MQTT();// Attempt to reconnect if publish fails
+      } else {
+        ITM_Printf("Publish OK\r\n");
+    }
+
+    ITM_Printf("Before MQTTYield\r\n");
+    int yield_rc = MQTTYield(&client, 1000);
+    ITM_Printf("After MQTTYield\r\n");
+    if (yield_rc != MQTT_SUCCESS) {
+        ITM_PrintfFmt("Yield failed: %d\r\n", yield_rc);
+        //reconnecting_MQTT();// Attempt to reconnect if yield fails
+    }
+     // ...your existing code in the loop...
+     osDelay(1000);
+ }
+
 }
+  /* USER CODE END func_updateCloud */
+
 
 /* USER CODE BEGIN Header_func_pumpEventHandle */
 /**
