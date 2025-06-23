@@ -82,25 +82,18 @@ SPI_HandleTypeDef hspi2;
 
 UART_HandleTypeDef huart2;
 
-/* Definitions for updateLCD */
-osThreadId_t updateLCDHandle;
-const osThreadAttr_t updateLCD_attributes = {
-  .name = "updateLCD",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
-};
-/* Definitions for updateCloud */
-osThreadId_t updateCloudHandle;
-const osThreadAttr_t updateCloud_attributes = {
-  .name = "updateCloud",
-  .stack_size = 2048 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
 /* Definitions for pumpEventHandle */
 osThreadId_t pumpEventHandleHandle;
 const osThreadAttr_t pumpEventHandle_attributes = {
   .name = "pumpEventHandle",
   .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for updateCloud */
+osThreadId_t updateCloudHandle;
+const osThreadAttr_t updateCloud_attributes = {
+  .name = "updateCloud",
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for pumpVolumeQueue */
@@ -170,9 +163,8 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI2_Init(void);
-void func_updateLCD(void *argument);
-void func_updateCloud(void *argument);
 void func_pumpEventHandle(void *argument);
+void func_updateCloud(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -482,14 +474,11 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of updateLCD */
-  updateLCDHandle = osThreadNew(func_updateLCD, NULL, &updateLCD_attributes);
+  /* creation of pumpEventHandle */
+  pumpEventHandleHandle = osThreadNew(func_pumpEventHandle, NULL, &pumpEventHandle_attributes);
 
   /* creation of updateCloud */
   updateCloudHandle = osThreadNew(func_updateCloud, NULL, &updateCloud_attributes);
-
-  /* creation of pumpEventHandle */
-  pumpEventHandleHandle = osThreadNew(func_pumpEventHandle, NULL, &pumpEventHandle_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -749,29 +738,70 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_func_updateLCD */
+/* USER CODE BEGIN Header_func_pumpEventHandle */
 /**
-  * @brief  Function implementing the updateLCD thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_func_updateLCD */
-void func_updateLCD(void *argument)
+* @brief Function implementing the pumpEventHandle thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_func_pumpEventHandle */
+void func_pumpEventHandle(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
-  for(;;)
-  {
-//	 if(osSemaphoreAcquire(pumpSemaphoreHandle, osWaitForever) == osOK){ // Acquire semaphore
-//		// Format and display messages
-//		  lcd_clear();
-//		  lcd_put_cur(0, 0);
-//		  sprintf(message, "Petrol Fuel Volume: %lu L", petrol_tank_volume);
-//		  lcd_send_string(message);
-//		  osSemaphoreRelease(pumpSemaphoreHandle); // Release semaphore
-//		}
-    osDelay(1);
-  }
+	 uint16_t received_pump_event_id;
+	  char debug_msg[100];
+	  for(;;)
+	  {
+		  if (osMessageQueueGet(pumpVolumeQueueHandle, &received_pump_event_id, NULL, osWaitForever) == osOK) {
+				 if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
+		             // Check if there's petrol left before decrementing the tank volume.
+		             if (petrol_tank_volume > 0) {
+
+		                 petrol_tank_volume--; // Decrement the main tank volume
+
+		                 // Increment the volume for the specific pump that triggered the event.
+		                 switch (received_pump_event_id) {
+		                     case 1:
+		                         pump1_volume++;
+		                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET);
+		                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
+		                         break;
+		                     case 2:
+		                         pump2_volume++;
+		                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_RESET);
+		                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_SET);
+		                         break;
+		                     case 3:
+		                         pump3_volume++;
+		                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_RESET);
+		                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_SET);
+		                         break;
+		                     case 4:
+		                         pump4_volume++;
+		                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_RESET);
+		                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_SET);
+		                         break;
+		                     default:
+		                         sprintf(debug_msg, "Unknown pump event ID: %u\r\n", received_pump_event_id);
+		                         break;
+		                 }
+		                 timer_end = SysTick -> VAL;
+		             } else {
+	                    // Assert stop signals (drive LOW) to side boards
+	                    //board 1
+	                    HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
+	                    //board 2
+	                    HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
+	                    ITM_Printf("\nTank Empty. All pump stop\r\n");
+		             }
+		             osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
+		         }else{
+	              // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
+	              ITM_Printf("PumpEventHandle: Failed to acquire semaphore!\r\n");
+	          }
+	      }
+	  }
   /* USER CODE END 5 */
 }
 
@@ -790,76 +820,7 @@ void func_updateCloud(void *argument)
 //   {
     
 //  }
-
-}
   /* USER CODE END func_updateCloud */
-
-
-/* USER CODE BEGIN Header_func_pumpEventHandle */
-/**
-* @brief Function implementing the pumpEventHandle thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_func_pumpEventHandle */
-void func_pumpEventHandle(void *argument)
-{
-  /* USER CODE BEGIN func_pumpEventHandle */
-  /* Infinite loop */
-  uint16_t received_pump_event_id;
-  char debug_msg[100];
-  for(;;)
-  {
-	  if (osMessageQueueGet(pumpVolumeQueueHandle, &received_pump_event_id, NULL, osWaitForever) == osOK) {
-			 if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
-	             // Check if there's petrol left before decrementing the tank volume.
-	             if (petrol_tank_volume > 0) {
-                   
-	                 petrol_tank_volume--; // Decrement the main tank volume
-
-	                 // Increment the volume for the specific pump that triggered the event.
-	                 switch (received_pump_event_id) {
-	                     case 1:
-	                         pump1_volume++;
-	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET);
-	                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
-	                         break;
-	                     case 2:
-	                         pump2_volume++;
-	                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_RESET);
-	                         HAL_GPIO_WritePin(GPIOA,pump2_volume_inc_Pin,GPIO_PIN_SET);
-	                         break;
-	                     case 3:
-	                         pump3_volume++;
-	                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_RESET);
-	                         HAL_GPIO_WritePin(GPIOB,pump3_volume_inc_Pin,GPIO_PIN_SET);
-	                         break;
-	                     case 4:
-	                         pump4_volume++;
-	                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_RESET);
-	                         HAL_GPIO_WritePin(GPIOB,pump4_volume_inc_Pin,GPIO_PIN_SET);
-	                         break;
-	                     default:
-	                         sprintf(debug_msg, "Unknown pump event ID: %u\r\n", received_pump_event_id);
-	                         break;
-	                 }
-	                 timer_end = SysTick -> VAL;
-	             } else {
-                    // Assert stop signals (drive LOW) to side boards
-                    //board 1
-                    HAL_GPIO_WritePin(stop_Board1_GPIO_Port, stop_Board1_Pin, GPIO_PIN_RESET);
-                    //board 2
-                    HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_RESET);
-                    ITM_Printf("\nTank Empty. All pump stop\r\n");
-	             }
-	             osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
-	         }else{
-              // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
-              ITM_Printf("PumpEventHandle: Failed to acquire semaphore!\r\n");
-          }
-      }
-  }
-  /* USER CODE END func_pumpEventHandle */
 }
 
 /**
