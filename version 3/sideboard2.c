@@ -474,16 +474,11 @@ void func_pump3(void *argument)
   {
 	  if(pump3_status){
 	  		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_RESET);
-	  		//  osDelay(pdMS_TO_TICKS(1));
 	  		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
 
-	  //	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
 	  		  pump3_volume++;
 	  		  //osDelay(2);
-	  		  CPU_Burst(200);
-	  		//  osSemaphoreRelease(pumpSemaphoreHandle);
-	  //	  }
-	  //	  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS));
+	  		  CPU_Burst(189);
 
 	      }else{
 	  	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
@@ -508,17 +503,11 @@ void func_pump4(void *argument)
   {
 	  if(pump4_status){
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_RESET);
-			//  osDelay(pdMS_TO_TICKS(1));
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
 
-	  //	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
 			  pump4_volume++;
-			  CPU_Burst(200);
+			  CPU_Burst(189);
 			  //osDelay(2);
-			//  osSemaphoreRelease(pumpSemaphoreHandle);
-	  //	  }
-	  //	  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS));
-
 		  }else{
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
 		  //osDelay(pdMS_TO_TICKS(100));
