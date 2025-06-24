@@ -125,7 +125,8 @@ volatile uint32_t pump4_volume = 0;
 //timing analysis
 uint32_t timer_start = 0;
 uint32_t timer_end = 0;
-//uint32_t timer_diff = timer_start - timer_end;
+uint32_t elapsedTime = 0;
+
 
 //for SPI
 uint8_t txsize[8] = {2,2,2,2,2,2,2,2}; // Socket TX buffer
@@ -440,6 +441,8 @@ int main(void)
   DNS_time_handler();
   //w5500 section
   W5500Init();
+
+  ITM_PrintfFmt("SysTick LOAD (auto-reload) value: %lu\r\n", SysTick->LOAD);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -680,10 +683,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI_Chip_Select_GPIO_Port, SPI_Chip_Select_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, pump1_volume_inc_Pin|stop_Board2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(stop_Board2_GPIO_Port, stop_Board2_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, pump2_volume_inc_Pin|stop_Board1_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, pump3_volume_inc_Pin|pump4_volume_inc_Pin, GPIO_PIN_SET);
@@ -695,19 +698,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SPI_Chip_Select_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump2_volume_inc_Pin pump1_volume_inc_Pin stop_Board1_Pin */
-  GPIO_InitStruct.Pin = pump2_volume_inc_Pin|pump1_volume_inc_Pin|stop_Board1_Pin;
+  /*Configure GPIO pins : pump1_volume_inc_Pin stop_Board2_Pin */
+  GPIO_InitStruct.Pin = pump1_volume_inc_Pin|stop_Board2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : pump2_volume_inc_Pin stop_Board1_Pin */
+  GPIO_InitStruct.Pin = pump2_volume_inc_Pin|stop_Board1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : stop_Board2_Pin */
-  GPIO_InitStruct.Pin = stop_Board2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(stop_Board2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : pump3_volume_inc_Pin pump4_volume_inc_Pin */
   GPIO_InitStruct.Pin = pump3_volume_inc_Pin|pump4_volume_inc_Pin;
@@ -754,7 +757,7 @@ void func_pumpEventHandle(void *argument)
 	  for(;;)
 	  {
 		  if (osMessageQueueGet(pumpVolumeQueueHandle, &received_pump_event_id, NULL, osWaitForever) == osOK) {
-				 if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
+//				 if (osSemaphoreAcquire(mySemaphore01Handle, osWaitForever) == osOK) {
 		             // Check if there's petrol left before decrementing the tank volume.
 		             if (petrol_tank_volume > 0) {
 
@@ -764,8 +767,8 @@ void func_pumpEventHandle(void *argument)
 		                 switch (received_pump_event_id) {
 		                     case 1:
 		                         pump1_volume++;
-		                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_RESET);
-		                         HAL_GPIO_WritePin(GPIOA,pump1_volume_inc_Pin,GPIO_PIN_SET);
+		                         HAL_GPIO_WritePin(GPIOC,pump1_volume_inc_Pin,GPIO_PIN_RESET);
+		                         HAL_GPIO_WritePin(GPIOC,pump1_volume_inc_Pin,GPIO_PIN_SET);
 		                         break;
 		                     case 2:
 		                         pump2_volume++;
@@ -787,6 +790,7 @@ void func_pumpEventHandle(void *argument)
 		                         break;
 		                 }
 		                 timer_end = SysTick -> VAL;
+                     elapsedTime = (timer_start - timer_end) * 1000000/ 84000000;
 		             } else {
 	                    // Assert stop signals (drive LOW) to side boards
 	                    //board 1
@@ -796,10 +800,10 @@ void func_pumpEventHandle(void *argument)
 	                    ITM_Printf("\nTank Empty. All pump stop\r\n");
 		             }
 		             osSemaphoreRelease(mySemaphore01Handle); // Ensure semaphore is always released
-		         }else{
-	              // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
-	              ITM_Printf("PumpEventHandle: Failed to acquire semaphore!\r\n");
-	          }
+//		         }else{
+//	              // Log semaphore acquisition failure, this shouldn't happen with osWaitForever unless kernel is faulty
+//	              ITM_Printf("PumpEventHandle: Failed to acquire semaphore!\r\n");
+//	          }
 	      }
 	  }
   /* USER CODE END 5 */
