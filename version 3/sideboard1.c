@@ -465,12 +465,9 @@ void func_pump1(void *argument)
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
 
-//	  if ( HAL_GPIO_ReadPin(GPIOB,pump1_inc_signal_Pin) == GPIO_PIN_RESET) {
 		  pump1_volume++;
 		  //osDelay(2);
-		  CPU_Burst(200);
-		//  osSemaphoreRelease(pumpSemaphoreHandle);
-//	  }
+		  CPU_Burst(189);
     }else{
 	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
     }
@@ -492,23 +489,14 @@ void func_pump2(void *argument)
   for(;;)
   {
 	  if(pump2_status){
-		   // Generate a single pulse for the mainboard to count
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
-		//  osDelay(pdMS_TO_TICKS(1)); // Small delay to create a pulse width
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);   // Pulse HIGH (idle state)
 
-		   // Increment local volume counter (for display on this sidepump's LCD)
-//		  if (HAL_GPIO_ReadPin(GPIOB,pump2_inc_signal_Pin) == GPIO_PIN_RESET) {
 			   pump2_volume++;
 			   //osDelay(2);
-			   CPU_Burst(200);
-//	  }
-
-		 //  osDelay(pdMS_TO_TICKS(PULSE_DELAY_MS)); // **CRITICAL: Control the pulse generation rate.**
+			   CPU_Burst(189);
 	   } else {
-		   // If pump is not active or stop signal is active, ensure signal is HIGH (idle)
 		   HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
-		//   osDelay(pdMS_TO_TICKS(100)); // Sleep when not pumping
 	   }
   }
   /* USER CODE END func_pump2 */
