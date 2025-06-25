@@ -410,12 +410,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(stop_board1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump1_signal_inc_Pin pump2_signal_inc_Pin */
-  GPIO_InitStruct.Pin = pump1_signal_inc_Pin|pump2_signal_inc_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
   /*Configure GPIO pins : pump2_petrol_signal_Pin pump1_petrol_signal_Pin */
   GPIO_InitStruct.Pin = pump2_petrol_signal_Pin|pump1_petrol_signal_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -430,9 +424,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
-
   HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
@@ -463,11 +454,13 @@ void func_pump1(void *argument)
   {
 	  if(pump1_status){
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
+		  CPU_Burst(100);
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
+		  CPU_Burst(100);
 
 		  pump1_volume++;
 		  //osDelay(2);
-		  CPU_Burst(189);
+
     }else{
 	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
     }
@@ -490,11 +483,11 @@ void func_pump2(void *argument)
   {
 	  if(pump2_status){
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
-		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);   // Pulse HIGH (idle state)
+		  CPU_Burst(100);
+		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
 
-			   pump2_volume++;
-			   //osDelay(2);
-			   CPU_Burst(189);
+		  CPU_Burst(100);// Pulse HIGH (idle state)
+		  pump2_volume++;   //osDelay(2);
 	   } else {
 		   HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
 	   }
