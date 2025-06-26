@@ -68,7 +68,7 @@ osThreadId_t LCDHandle;
 const osThreadAttr_t LCD_attributes = {
   .name = "LCD",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for pumpSemaphore */
 osSemaphoreId_t pumpSemaphoreHandle;
@@ -411,12 +411,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : pump4_signal_inc_Pin pump3_signal_inc_Pin stop_board2_Pin */
-  GPIO_InitStruct.Pin = pump4_signal_inc_Pin|pump3_signal_inc_Pin|stop_board2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /*Configure GPIO pin : LD2_Pin */
   GPIO_InitStruct.Pin = LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -430,6 +424,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : stop_board2_Pin */
+  GPIO_InitStruct.Pin = stop_board2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(stop_board2_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PC10 PC12 */
   GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -438,12 +438,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
-
-  HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
-
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
@@ -474,15 +468,13 @@ void func_pump3(void *argument)
   {
 	  if(pump3_status){
 	  		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_RESET);
+	  		  CPU_Burst(1200);
 	  		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
+//	  		  CPU_Burst(100);
 
-	  		  pump3_volume++;
-	  		  //osDelay(2);
-	  		  CPU_Burst(189);
-
+			  pump3_volume++;
 	      }else{
 	  	  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
-	  	  //osDelay(pdMS_TO_TICKS(100));
 	      }
   }
   /* USER CODE END 5 */
@@ -503,15 +495,14 @@ void func_pump4(void *argument)
   {
 	  if(pump4_status){
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_RESET);
+			  CPU_Burst(1200);
 			  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
+//			  CPU_Burst(100);
 
 			  pump4_volume++;
-			  CPU_Burst(189);
-			  //osDelay(2);
 		  }else{
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_12,GPIO_PIN_SET);
-		  //osDelay(pdMS_TO_TICKS(100));
-	  	      }
+	  }
   }
   /* USER CODE END func_pump4 */
 }
