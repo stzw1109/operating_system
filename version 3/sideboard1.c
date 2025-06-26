@@ -68,7 +68,7 @@ osThreadId_t LCDHandle;
 const osThreadAttr_t LCD_attributes = {
   .name = "LCD",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for pumpSemaphore */
 osSemaphoreId_t pumpSemaphoreHandle;
@@ -454,9 +454,9 @@ void func_pump1(void *argument)
   {
 	  if(pump1_status){
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_RESET);
-		  CPU_Burst(100);
+		  CPU_Burst(1200);
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_8,GPIO_PIN_SET);
-		  CPU_Burst(100);
+		  //CPU_Burst(3512);
 
 		  pump1_volume++;
 		  //osDelay(2);
@@ -483,10 +483,10 @@ void func_pump2(void *argument)
   {
 	  if(pump2_status){
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_RESET);
-		  CPU_Burst(100);
+		  CPU_Burst(1200);
 		  HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
 
-		  CPU_Burst(100);// Pulse HIGH (idle state)
+		  //CPU_Burst(3512);// Pulse HIGH (idle state)
 		  pump2_volume++;   //osDelay(2);
 	   } else {
 		   HAL_GPIO_WritePin(GPIOC,GPIO_PIN_6,GPIO_PIN_SET);
